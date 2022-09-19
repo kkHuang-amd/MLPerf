@@ -80,7 +80,6 @@ class LinearWarmupPolyDecayScheduler(LRScheduler):
         self.total_steps = total_steps
         self.end_learning_rate = end_learning_rate
         self.degree = degree
-        self.offset_step = torch.tensor(int(self.start_warmup_steps == 0)).cuda()
         super(LinearWarmupPolyDecayScheduler, self).__init__(optimizer, last_epoch)
 
         mlperf_logger.log_event(key=mlperf_logger.constants.OPT_LR_WARMUP_STEPS, value=self.num_warmup_updates, sync=False)
@@ -88,18 +87,21 @@ class LinearWarmupPolyDecayScheduler(LRScheduler):
         mlperf_logger.log_event(key='start_warmup_step', value=self.start_warmup_steps, sync=False)
 
     def step(self, epoch=None):
-        # Instead of optimizer.param_groups['lr'],
-        # update optimizer._lr to avoid sync
-        self.last_epoch = self.optimizer._step + 1
-        self.optimizer._lr = self.get_lr()[0]
+        param_group = self.optimizer.param_groups[0]
+        if 'step' in param_group:
+            self.last_epoch = param_group['step'] + 1
+        else:
+            self.last_epoch = 1
+
+        for param_group, lr in zip(self.optimizer.param_groups, self.get_lr()):
+            param_group['lr'] = lr
 
     def get_lr(self):
-        mod_step = self.last_epoch - self.offset_step - self.start_warmup_steps
-
-        cond = (mod_step < self.num_warmup_updates).to(dtype=torch.float32, device=mod_step.device)
-        progress = (cond * (mod_step / (self.num_warmup_updates + 1e-6))) + \
-                ((1.0 - cond) * (torch.min(torch.cat(((self.last_epoch - self.offset_step) / self.total_steps, torch.ones(1, dtype=torch.float32, device=mod_step.device))))))
-        base_lr = self.base_lrs[0]
-        lr = (cond * (base_lr * progress)) + \
-                ((1.0 - cond) * ((base_lr - self.end_learning_rate) * (1-progress) ** self.degree + self.end_learning_rate))
-        return lr
+        mod_step = self.last_epoch - self.start_warmup_steps
+        if mod_step < self.num_warmup_updates:
+            progress = mod_step / self.num_warmup_updates
+            return [(base_lr * progress) for base_lr in self.base_lrs]
+        else:
+            progress = min(self.last_epoch / self.total_steps, 1.0)
+            return [(base_lr - self.end_learning_rate) * (1-progress) ** self.degree + self.end_learning_rate
+                    for base_lr in self.base_lrs]

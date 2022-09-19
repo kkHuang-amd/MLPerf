@@ -8,9 +8,6 @@ import subprocess
 import re
 
 this_dir = os.path.dirname(os.path.abspath(__file__))
-gpus = subprocess.check_output("/opt/rocm/bin/rocminfo").decode('UTF-8').split('\n')
-gpus = [re.search('(gfx.*[0-9a-z])', g).group(0) for g in gpus if 'gfx' in g]
-extra_args = ["--amdgpu-target=" + gpus[0]]
 
 #sets_rocm_pytorch = False
 maj_ver, min_ver, _ = torch.__version__.split('.')
@@ -80,6 +77,9 @@ if not is_rocm_pytorch:
 		    )
 	    )
 elif is_rocm_pytorch:
+    gpus = subprocess.check_output("/opt/rocm/bin/rocminfo").decode('UTF-8').split('\n')
+    gpus = [re.search('(gfx.*[0-9a-z])', g).group(0) for g in gpus if 'gfx' in g]
+    extra_args = ["--amdgpu-target=" + gpus[0]]
     if found_Backward_Pass_Guard:
         extra_args = extra_args + ['-DBACKWARD_PASS_GUARD'] + ['-DBACKWARD_PASS_GUARD_CLASS=BackwardPassGuard']
     if found_ROCmBackward_Pass_Guard:

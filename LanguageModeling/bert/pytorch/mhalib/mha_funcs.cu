@@ -21,11 +21,11 @@
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
 //#include <cuda_profiler_api.h>
-#include "THC/THC.h"
+//#include "THC/THC.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <torch/extension.h>
 #include <math.h>
-#include "/opt/pytorch/apex/apex/contrib/csrc/multihead_attn/softmax.h"
+#include "/opt/pytorch/apex/apex/contrib/csrc/multihead_attn/softmax.cuh"
 
 #define nstreams 16
 
@@ -512,7 +512,7 @@ std::vector<torch::Tensor> FastMaskSoftmaxDropoutFprop_(torch::Tensor &input,
     torch::Tensor dropout_mask      = torch::empty({batch*heads, ntokens},   mask_options);
     if (is_training) {
         //use at:: function so that C++ version generates the same random mask as python version
-        auto dropout_tuple = at::native_dropout(input, 1.0f-dropout_prob, 1./(1.0f-dropout_prob), true);
+        auto dropout_tuple = at::_fused_dropout(input, 1.0f-dropout_prob);
         dropout_results = std::get<0>(dropout_tuple);
         dropout_mask = std::get<1>(dropout_tuple);
     }

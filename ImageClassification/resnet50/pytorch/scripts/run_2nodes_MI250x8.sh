@@ -6,22 +6,22 @@ CURRENTDATE=`date +"%Y-%m-%d-%T"`
 
 # Mention the number of gpus
 gpus_per_node=8
-batch_size=384
+batch_size=204
 num_epochs=42
 format="nhwc"
 OUTDIR="./"
 wd="0.0002"
-base_lr="9.1"
+base_lr="10.5"
 lr_sched="polynomial"
 warmup=2
-data_dir="/datasets/imagenet/"
+data_dir="/global/scratch/mlperf_datasets/imagenet/"
 nnodes=${SLURM_NTASKS:-1}
 nodeid=${SLURM_NODEID:-0}
 gbs=$((batch_size*gpus_per_node*nnodes))
 tag=gbs${gbs}_${gpus_per_node}GPUs_epoch${num_epochs}_${format}_lr${base_lr}_warmup${warmup}_lr-sched-${lr_sched}_node${nodeid}_$6
 submission_platform="MI200system"
 
-MASTER_ADDR=${13:-`echo $SLURM_NODELIST | sed -e 's/\[\([0-9]\).*\]/\1/g' | sed -e 's/,.*//g'`}
+MASTER_ADDR=${1:-`echo $SLURM_NODELIST | sed -e 's/\[\([0-9]\).*\]/\1/g' | sed -e 's/,.*//g'`}
 
 CMD="--amp --dynamic-loss-scale --lr-schedule ${lr_sched} --num-gpus $gpus_per_node \
   --mom 0.9 --wd ${wd} --lr ${base_lr} --warmup ${warmup} --epochs ${num_epochs} --use-lars -b $batch_size \

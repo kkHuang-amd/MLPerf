@@ -1,0 +1,17 @@
+data/
+results/
+__pycache__/
+*.log
+*.err
+*.out
+*.nsys-rep
+*.sqlite
+*.copy_stats.csv
+*.db
+*.hip_stats.csv
+*.hsa_stats.csv
+*.stats.csv
+*.sysinfo.txt
+rocprof*
+*.zip
+*.tar.gz

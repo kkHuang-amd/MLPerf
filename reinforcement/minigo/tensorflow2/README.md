@@ -3,26 +3,20 @@
 This task benchmarks reinforcement learning for the 19x19 version of the boardgame Go.
 The model plays games against itself and uses these games to improve play.
 
-## Requirements
-* [nvidia-docker](https://github.com/NVIDIA/nvidia-docker)
-* [TensorFlow (20.06-tf1-py3) NGC container](https://ngc.nvidia.com/catalog/containers/nvidia:tensorflow)
 
 # 2. Directions
 ### Steps to launch training
-To setup the environment using nvidia-docker you can use the commands below.
-To build tensorflow and minigo without nvidia-docker, please follow instructions at
-https://github.com/tensorflow/minigo/tree/master/ml_perf/README.md
+To setup the environment using amd-docker you can use the commands below.
 
 
 ### Build docker and prepare dataset
 ```
+    # go to the relative folder in your local
+    cd ~MLPerf/reinforcement/minigo/tensorflow2 
+    
     # Build a docker using Dockerfile in this directory
-    docker build -t mlperf-amd:minigo .
-
-    # run docker
-    docker run -v <path/to/store/checkpoint>:/data --rm -it mlperf-amd:minigo
-    cd minigo
-
+    docker build -t {YOUR TAG} .
+    
     # Download dataset, needs gsutil.
     # Download & extract bootstrap checkpoint.
     gsutil cp gs://minigo-pub/ml_perf/0.7/checkpoint.tar.gz .
@@ -32,10 +26,21 @@ https://github.com/tensorflow/minigo/tree/master/ml_perf/README.md
     mkdir -p ml_perf/target/
     gsutil cp gs://minigo-pub/ml_perf/0.7/target.* ml_perf/target/
 
+    # run docker
+    docker run -it --network=host --device=/dev/kfd --device=/dev/dri --ipc=host --group-add video --cap-add=SYS_PTRACE --security-opt seccomp=unconfined --shm-size=64G {YOUR TAG} 
+    cd minigo
+    
+    # untar checkpoint.tar.gz
+    tar xfz /your_path/to_checkpoint/checkpoint.tar.gz -C ml_perf/ 
+    
+    # put target files
+    mkdir -p ml_perf/target/ 
+    cp //your_path/to_checkpoint/target.* ml_perf/target/ 
+
     # comment out L331 in dual_net.py before running freeze_graph.
     # L331 is: optimizer = hvd.DistributedOptimizer(optimizer)
     # Horovod is initialized via train_loop.py and isn't needed for this step.
-    HIP_VISIBLE_DEVICES=0 python3 freeze_graph.py --flagfile=ml_perf/flags/19/architecture.flags  --model_path=ml_perf/target/target
+    HIP_VISIBLE_DEVICES=0 python3 freeze_graph.py --flagfile=ml_perf/flags/19/architecture.flags  --model_path=ml_perf/target/target 
     mv ml_perf/target/target.minigo ml_perf/target/target.minigo.tf
 
     # uncomment L331 in dual_net.py.
@@ -45,87 +50,10 @@ https://github.com/tensorflow/minigo/tree/master/ml_perf/README.md
     # TARGET_PATH="/data/target/target.minigo.tf"
     cp -a ml_perf/target /data/
     cp -a ml_perf/checkpoints/mlperf07 /data/
-
+    
+    # If you have to run with some specific number of  GPUs, modify   NUM_GPUS_TRAIN in   configs/config_MI100_8gpus.sh.  Both 4 and 8 work.
+    export LD_LIBRARY_PATH=/opt/rocm/lib/:$LD_LIBRARY_PATH  
+    DGXSYSTEM="mi100_8gpus" SLURM_NTASKS_PER_NODE=17 mpirun --allow-run-as-root -np 17 ./run_and_time.sh |& tee minigov1-8gpus-2ppg-convergence.log 
     # exit docker
 ```
 
-### Run benchmark with run_with_docker.sh (only for training on single-node configs)
-```
-    # nvidia-docker: Note that performance or functionality may vary from the tested SLURM instructions
-    # Launch configuration and system-specific hyperparameters for various system  are in config_{DGXSYSTEM}.sh. 
-    # where DGXSYSTEM is one of {DGX1|DGX2|DGXA100}
-    # needs sudo access to execute commands under CLEAR_CACHES=1, use CLEAR_CACHES=0 (not mlperf compliant) to run without sudo access on a machine
-    CONT="mlperf-amd:minigo" DATADIR=<path/to/store/checkpoint> LOGDIR=<path/to/output/dir> DGXSYSTEM=${DGXSYSTEM} bash run_with_docker.sh
-
-```
-
-### Run benchmark with SLURM - single-node/multi-node training.
-```
-    # Data from $DATADIR is mounted to /data/ in docker.
-    # Launch configuration and system-specific hyperparameters for various system  are in config_{DGXSYSTEM}.sh. 
-    # where DGXSYSTEM is one of {DGX1|DGX2|DGX2_multi_xxnodes|DGXA100|DGXA100_multi_xxnodes}
-    CONT="mlperf-amd:minigo" DATADIR=<path/to/store/checkpoint> LOGDIR=<path/to/output/dir> DGXSYSTEM=${DGXSYSTEM} sbatch -N $DGXNNODES -t $WALLTIME run.sub
-```
-
-
-
-## Steps to download and verify data
-
-All training data is generated during the selfplay phase of the RL loop.
-
-The only data to be downloaded are the starting checkpoint and the target model. These are downloaded automatically
-before the training starts.
-
-# 3. Model
-### Publication/Attribution
-
-This benchmark is based on the [Minigo](https://github.com/tensorflow/minigo) project,
-which is and inspired by the work done by Deepmind with
-["Mastering the Game of Go with Deep Neural Networks and Tree Search"](https://www.nature.com/articles/nature16961),
-["Mastering the Game of Go without Human Knowledge"](https://www.nature.com/articles/nature24270), and
-["Mastering Chess and Shogi by Self-Play with a General Reinforcement Learning Algorithm"](https://arxiv.org/abs/1712.01815).
-
-Minigo is built on top of Brian Lee's [MuGo](https://github.com/brilee/MuGo), a pure Python
-implementation of the first AlphaGo paper.
-
-Note that Minigo is an independent effort from AlphaGo.
-
-### Reinforcement Setup
-This benchmark includes both the environment and training for 19x19 Go. There are three primary
-parts to this benchmark.
-
- - Selfplay: the *latest trained* model plays games with itself as both black and white to produce
-   board positions for training.
- - Training: waits for selfplay to play a specified number of games with the latest model, then
-   trains the next model generation, updating the neural network waits. Selfplay constantly monitors
-   the training output directory and loads the new weights when as they are produced by the trainer.
- - Target Evaluation: The training loop runs for a preset number of iterations, producing a new
-   model generation each time. Once finished, target evaluation relplays the each trained model
-   until it finds the first one that is able to beat a target model in at least 50% of the games.
-   The time from training start to when this generation was produced is taken as the benchmark
-   execution time.
-
-### Structure
-This task has a non-trivial network structure, including a search tree. A good overview of the
-structure can be found here: https://medium.com/applied-data-science/alphago-zero-explained-in-one-diagram-365f5abf67e0.
-
-### Weight and bias initialization and Loss Function
-Network weights are initialized randomly. Initialization and loss are described here;
-["Mastering the Game of Go with Deep Neural Networks and Tree Search"](https://www.nature.com/articles/nature16961)
-
-### Optimizer
-We use a MomentumOptimizer to train the network.
-
-
-# 4. Quality
-
-### Quality metric
-Quality is measured by the number of games won out of 256 against a fixed target model.
-The target model is downloaded before automatically before the training starts.
-
-### Quality target
-The target is to win at least 50% out of 256 games against the target model.
-
-### Evaluation frequency
-Evaluations are performed after completing the training and are not timed.
-Checkpoints from every RL loop iteration are evaluated. 

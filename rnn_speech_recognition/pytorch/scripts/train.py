@@ -37,6 +37,7 @@ from common.optimizers import lr_policy
 from common.tb_dllogger import flush_log, init_log, log
 from rnnt import config
 from rnnt.decoder import RNNTGreedyDecoder
+from rnnt.loss import apexTransducerLoss
 from rnnt.loss import RNNTLoss
 from rnnt.model import RNNT
 import torch.multiprocessing as mp
@@ -428,7 +429,8 @@ def main():
     model = RNNT(n_classes=tokenizer.num_labels + 1, **rnnt_config)
     model.cuda()
     blank_idx = tokenizer.num_labels
-    loss_fn = RNNTLoss(blank_idx=blank_idx)
+    loss_fn = RNNTLoss(blank_idx) if os.getenv('RNNTLOSS') else apexTransducerLoss(blank_idx=blank_idx, precision='fp32', packed_input=False)
+    print(loss_fn)
     if args.mlperf:
         logging.log_event(logging.constants.EVAL_MAX_PREDICTION_SYMBOLS, value=args.max_symbol_per_sample)
     greedy_decoder = RNNTGreedyDecoder(blank_idx=blank_idx,
@@ -534,10 +536,10 @@ def main():
             audio, audio_lens, txt, txt_lens = batch
             #TODO is this the best place to move tensors over to cuda?  Does everything need to go? maybe batch.cuda?
             #Our initial spectrogram and mel filter aug's aren't on gpu's it seems, we should look into this.
-            # audio = audio.cuda()
-            # audio_lens = audio_lens.cuda()
-            # txt = txt.cuda()
-            # txt_lens = txt_lens.cuda()
+            audio = audio.cuda()
+            audio_lens = audio_lens.cuda()
+            txt = txt.cuda()
+            txt_lens = txt_lens.cuda()
 
             feats, feat_lens = train_feat_proc([audio, audio_lens])
             all_feat_lens += feat_lens
@@ -545,6 +547,7 @@ def main():
             loss = loss_fn(log_probs[:, :log_prob_lens.max().item()],
                            log_prob_lens, txt, txt_lens)
 
+            # loss = loss_fn(log_probs, log_prob_lens, txt, txt_lens)
             loss /= args.grad_accumulation_steps
 
             del log_probs, log_prob_lens
@@ -617,7 +620,7 @@ def main():
 
                 step += 1
                 accumulated_batches = 0
-                if step >= args.max_steps:
+                if step > args.max_steps:
                     reach_max_step = True
                     break
 

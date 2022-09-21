@@ -15,9 +15,14 @@ RUN apt install -y sox ninja-build
 
 COPY requirements.txt $WORKSPACE_DIR
 COPY torchaudio-0.13.0a0+597a735-cp37-cp37m-linux_x86_64.whl $WORKSPACE_DIR
+COPY apex-0.1-cp37-cp37m-linux_x86_64.whl $WORKSPACE_DIR
 COPY run.sh $WORKSPACE_DIR
 COPY scripts $WORKSPACE_DIR/scripts
 COPY configs $WORKSPACE_DIR/configs
 
 RUN pip install -r requirements.txt
 RUN pip install torchaudio-0.13.0a0+597a735-cp37-cp37m-linux_x86_64.whl
+RUN pip install --force-reinstall apex-0.1-cp37-cp37m-linux_x86_64.whl
+
+# RUN git clone https://github.com/ROCmSoftwarePlatform/apex.git
+# RUN cd apex && python setup.py install --cpp_ext --cuda_ext --transducer

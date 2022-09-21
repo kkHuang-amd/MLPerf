@@ -20,6 +20,7 @@ docker run -it -d \
 	-v "$LIBRISPEECH:/data/LibriSpeech" \
 	-v "$SENTENCEPIECES:/data/sentencepieces/" \
 	-v "$(pwd)/log:/log" \
+	-v "$(pwd):/workspace" \
 	--name $CONTAINER_NAME $IMAGE_TAG
 
 echo "Enter docker with: docker attach $CONTAINER_NAME"

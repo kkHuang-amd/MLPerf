@@ -782,7 +782,7 @@ def prepare_model_and_optimizer(args, device, stream):
                 dwu_num_rs_pg=args.dwu_num_rs_pg,
                 dwu_num_ar_pg=args.dwu_num_ar_pg,
                 dwu_num_ag_pg=args.dwu_num_ag_pg,
-                use_nvlamb=False, clip_after_ar=False, fused_norm=True, fuse_scale=True, full_ar=full_ar, set_param_views_to_flat_buffer=True,
+                use_nvlamb=False, #clip_after_ar=False, fused_norm=True, fuse_scale=True, full_ar=full_ar, set_param_views_to_flat_buffer=True,
                 #use_nvlamb=False, clip_after_ar=False, fused_norm=True, fuse_scale=True, full_ar=full_ar, set_param_views_to_flat_buffer=False,
                 e5m2_allgather=args.dwu_e5m2_allgather)
         optimizer.set_global_scale(float(os.getenv("INIT_LOSS_SCALE", 2**20)))
@@ -865,35 +865,35 @@ def prepare_model_and_optimizer(args, device, stream):
         ##Comment the following if condition when distributed_lamb is working fine. 
         ##This is added to allow using vanilla fused lamb, as vanilla fused lamb doesnt have arg
         ##optimizer._new_params and errors out with Attribute Error
-        if args.distributed_lamb:
-            p_offset=0
-            prev=None
-            param_storage = optimizer._new_params.storage()
-            buffer_w_offsets=[]
-            buffer_b_offsets=[]
-            for i, p in enumerate(optimizer._model_params):
-                p_param_size = p.numel()
-                if 'self.Wq' in p_names[i]:
-                    buffer_w_offsets.append(p_offset)
-                if 'self.Bq' in p_names[i]:
-                    buffer_b_offsets.append(p_offset)
-                #if 'self.Wq' in p_names[i] or 'self.Wk' in p_names[i] or 'self.Wv' in p_names[i] or 'self.Bq' in p_names[i] or 'self.Bk' in p_names[i] or 'self.Bv' in p_names[i]  :
-                #    continue
-                with torch.no_grad():
-                    p.set_(source=param_storage, storage_offset=p_offset, size=p.size())
-                p_offset += p_param_size
-                if prev is not None and (prev.data_ptr() + prev.numel() * prev.element_size() != p.data_ptr()):
-                    p_offset = ((p_offset + 63) // 64) * 64
-                prev = p
+        #if args.distributed_lamb:
+        #    p_offset=0
+        #    prev=None
+        #    param_storage = optimizer._new_params.storage()
+        #    buffer_w_offsets=[]
+        #    buffer_b_offsets=[]
+        #    for i, p in enumerate(optimizer._model_params):
+        #        p_param_size = p.numel()
+        #        if 'self.Wq' in p_names[i]:
+        #            buffer_w_offsets.append(p_offset)
+        #        if 'self.Bq' in p_names[i]:
+        #            buffer_b_offsets.append(p_offset)
+        #        #if 'self.Wq' in p_names[i] or 'self.Wk' in p_names[i] or 'self.Wv' in p_names[i] or 'self.Bq' in p_names[i] or 'self.Bk' in p_names[i] or 'self.Bv' in p_names[i]  :
+        #        #    continue
+        #        with torch.no_grad():
+        #            p.set_(source=param_storage, storage_offset=p_offset, size=p.size())
+        #        p_offset += p_param_size
+        #        if prev is not None and (prev.data_ptr() + prev.numel() * prev.element_size() != p.data_ptr()):
+        #            p_offset = ((p_offset + 63) // 64) * 64
+        #        prev = p
 
-            ###Commenting it out as it errors wo FMHA
-            ###TODO Uncomment if condition after FMHA is enabled
-            if config.unpad_fmha:
-                for i in range(24):
-                    size_tmp = model.bert_model_segment.bert.encoder.layer[i].attention.self.Wqkv.size()
-                    model.bert_model_segment.bert.encoder.layer[i].attention.self.Wqkv.set_(source=param_storage, storage_offset=buffer_w_offsets[i], size=size_tmp)
-                    size_tmp = model.bert_model_segment.bert.encoder.layer[i].attention.self.Bqkv.size()
-                    model.bert_model_segment.bert.encoder.layer[i].attention.self.Bqkv.set_(source=param_storage, storage_offset=buffer_b_offsets[i], size=size_tmp)
+        #    ###Commenting it out as it errors wo FMHA
+        #    ###TODO Uncomment if condition after FMHA is enabled
+        #    if config.unpad_fmha:
+        #        for i in range(24):
+        #            size_tmp = model.bert_model_segment.bert.encoder.layer[i].attention.self.Wqkv.size()
+        #            model.bert_model_segment.bert.encoder.layer[i].attention.self.Wqkv.set_(source=param_storage, storage_offset=buffer_w_offsets[i], size=size_tmp)
+        #            size_tmp = model.bert_model_segment.bert.encoder.layer[i].attention.self.Bqkv.size()
+        #            model.bert_model_segment.bert.encoder.layer[i].attention.self.Bqkv.set_(source=param_storage, storage_offset=buffer_b_offsets[i], size=size_tmp)
         model.load_state_dict(checkpoint_remapped, strict=True)
 #        loss, _, _ = model(*batch_gpu_placeholder)
 #        optimizer._lazy_init_stage1()

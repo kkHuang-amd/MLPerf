@@ -1,0 +1,62 @@
+# Copyright (c) 2018, NVIDIA CORPORATION. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+#ARG FROM_IMAGE_NAME=rocm/pytorch:rocm3.8_ubuntu18.04_py3.6_pytorch
+#ARG FROM_IMAGE_NAME=compute-artifactory.amd.com:5000/rocm-plus-docker/framework/compute-rocm-rel-3.9:15_ubuntu18.04_py3.6_pytorch_rocm3.9_internal_testing_5d61328_18
+ARG FROM_IMAGE_NAME=rocm/pytorch:rocm4.0_ubuntu18.04_py3.6_pytorch
+
+FROM ${FROM_IMAGE_NAME}
+
+# Install dependencies for system configuration logger
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        infiniband-diags \
+        pciutils numactl \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace/dwl
+RUN pip install ninja
+RUN git clone --recursive -b 'v0.3.1' https://github.com/ROCmSoftwarePlatform/apex \
+ && cd apex \
+ && python3.6 setup.py install --cuda_ext --cpp_ext
+
+WORKDIR /workspace/dwl
+RUN pip install pybind11 Cython
+RUN git clone https://github.com/NVIDIA/cocoapi \
+ && cd cocoapi/PythonAPI \
+ && python3.6 setup.py build_ext install
+
+#install torchvision: only required for 3.9rc2
+WORKDIR /workspace/dwl
+ENV FORCE_CUDA=1
+RUN git clone -b 'v0.8.1' --single-branch https://github.com/pytorch/vision \
+ && cd vision \
+ && python3.6 setup.py install 
+
+# Install Python dependencies
+WORKDIR /workspace/object_detection
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir https://github.com/mlperf/logging/archive/9ea0afa.zip \
+ && pip install --no-cache-dir -r requirements.txt
+
+RUN pip install --no-cache-dir tqdm
+
+# Copy detectron code and build
+COPY . .
+ENV FORCE_CUDA=1
+RUN python3.6 setup.py develop
+RUN pip install numpy==1.17.4
+ENV OMP_NUM_THREADS=1
+ENV OPENCV_FOR_THREADS_NUM=1

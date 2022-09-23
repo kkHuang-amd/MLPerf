@@ -1,0 +1,5 @@
+Code checkpoint with rocm/pytorch:rocm5.1.3_ubuntu20.04_py3.7_pytorch_1.11.0 NCHW and NHWC 
+
+Code checkpoint with rocm/pytorch:rocm4.5.2_ubuntu18.04_py3.8_pytorch_1.10.0  
+
+Code checkpoint with rocm/pytorch:rocm4.3.1_ubuntu18.04_py3.6_pytorch_1.10.0  

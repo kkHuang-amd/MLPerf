@@ -50,7 +50,7 @@ echo "running benchmark"
 
 
 declare -a CMD
-if [ -n "${SLURM_LOCALID-}" ]; then
+if [ -n "${SLURM_LOCALID-}" && ${SLURM_JOB_NUM_NODES} -ne 1 ]; then
     # Mode 1: Slurm launched a task for each GPU and set some envvars; no need for parallel launch
     cluster=''
     if [[ "${DGXSYSTEM}" == DGX2* ]]; then
@@ -60,9 +60,9 @@ if [ -n "${SLURM_LOCALID-}" ]; then
         cluster='selene'
     fi
   if [ "${SLURM_NTASKS}" -gt "${SLURM_JOB_NUM_NODES}" ]; then
-    CMD=( './bind.sh' "--cluster=${cluster}" '--ib=single' '--' ${NSYSCMD} 'python' '-u' )
+    CMD=( './bind.sh' "--cluster=${cluster}" '--ib=single' '--' ${NSYSCMD} 'python3' '-u' )
   else
-    CMD=( 'python' '-u' )
+    CMD=( 'python3' '-u' )
   fi
 else
   # Mode 2: Single-node Docker; need to launch tasks with torchrun

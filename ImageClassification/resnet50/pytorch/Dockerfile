@@ -1,8 +1,17 @@
-FROM nvcr.io/nvidia/pytorch:19.05-py3
+FROM rocm/pytorch:rocm5.2.3_ubuntu20.04_py3.7_pytorch_1.12.1
 
-RUN git clone https://github.com/NVIDIA/apex \
-        && cd apex \
-        && pip install -v --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" .
+ARG USER
+ARG PASS
 
-ADD . /workspace/rn50
-WORKDIR /workspace/rn50
+ENV LANG C.UTF-8
+ENV LC_ALL C.UTF-8
+
+RUN mkdir -p /src
+
+WORKDIR /src
+
+RUN git clone https://${USER}:${PASS}@github.com/AMD-ACP/MLPerf -b dev && \
+    cd /src/MLPerf/ImageClassification/resnet50/pytorch && \
+    bash requirements.sh
+
+

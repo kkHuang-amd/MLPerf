@@ -10,10 +10,8 @@ import re
 this_dir = os.path.dirname(os.path.abspath(__file__))
 
 #sets_rocm_pytorch = False
-maj_ver, min_ver, _ = torch.__version__.split('.')
-if int(maj_ver) >= 1 and int(min_ver) >= 5:
-    from torch.utils.cpp_extension import ROCM_HOME
-    is_rocm_pytorch = True if ((torch.version.hip is not None) and (ROCM_HOME is not None)) else False
+from torch.utils.cpp_extension import ROCM_HOME
+is_rocm_pytorch = True if ((torch.version.hip is not None) and (ROCM_HOME is not None)) else False
 
 ext_modules = []
 

@@ -17,14 +17,20 @@ pkill python3
 echo "killing all previous python processes"
 
 echo "Clear page cache"
-sudo sync && sudo /sbin/sysctl vm.drop_caches=3
+sync && sudo /sbin/sysctl vm.drop_caches=3
 
 export NCCL_MIN_NCHANNELS=4
+#workaround for MI250 nccl issue
+export NCCL_MAX_NCHANNELS=8
 
 if [[ "$#" -ne 1 ]]; then
   echo "usage: $0 <num_gpus, please enter 1 or 2 or 4 or 8>"
   exit
 fi
+
+DATA_DIR=${DATA_DIR:-"/datasets/mlperf_dataset/wiki_20200101"}
+
+echo $DATA_DIR
 
 num_gpus=${1}
 precision=${3:-"fp16"}
@@ -40,9 +46,9 @@ train_steps_phase2=${20:-15000}
 allreduce_post_accumulation=${14:-"true"}
 allreduce_post_accumulation_fp16=${15:-"true"}
 gradient_accumulation_steps_phase2=${21:-1}
-BERT_CONFIG="/workspace/bert-dataset-v1.1/bert_config.json"
+BERT_CONFIG="${DATA_DIR}/bert_config.json"
 CODEDIR=${24:-"./"}
-init_checkpoint=${25:-"/workspace/bert-dataset-v1.1/model.ckpt-28252.pt"}
+init_checkpoint=${25:-"${DATA_DIR}/model.ckpt-28252.pt"}
 RESULTS_DIR=$CODEDIR/results
 CHECKPOINTS_DIR=$RESULTS_DIR/checkpoints
 
@@ -60,7 +66,7 @@ fi
 
 #Start Phase2
 
-DATA_DIR_PHASE2='/workspace/bert-dataset-v1.1/hdf5_4320_shards_varlength'
+DATA_DIR_PHASE2="${DATA_DIR}/hdf5_4320_shards_varlength"
 PREC=""
 if [ "$precision" = "fp16" ] ; then
    PREC="--fp16"
@@ -119,7 +125,7 @@ CMD+=" --dense_seq_output --unpad --exchange_padding --fused_gelu_bias --fused_m
 #--fused_bias_fc --fused_bias_mha --fused_dropout_add
 #CMD+=" --unpad_fmha" 
 #CMD+=" --distributed_lamb --dwu-num-rs-pg=1 --dwu-num-ar-pg=1 --dwu-num-ag-pg=1 --dwu-num-blocks=1"
-CMD+=" --eval_dir=/workspace/bert-dataset-v1.1/eval_varlength"
+CMD+=" --eval_dir=${DATA_DIR}/eval_varlength"
 CMD+=" --eval_iter_start_samples=150000"
 CMD+=" --eval_iter_samples=150000"
 CMD+=" --eval_batch_size=16"
@@ -127,7 +133,7 @@ CMD+=" --cache_eval_data --num_eval_examples 10000"
 #CMD+=" --use_ddp --ddp_type=native"
 CMD+=" --log_freq=1"
 
-CMD="python -m torch.distributed.launch --nproc_per_node=$num_gpus $CMD"
+CMD="python3 -m torch.distributed.launch --nproc_per_node=$num_gpus $CMD"
 #fi
 
 if [ "$create_logfile" = "true" ] ; then

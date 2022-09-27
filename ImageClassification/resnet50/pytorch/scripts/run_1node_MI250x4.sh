@@ -18,7 +18,7 @@ data_dir=${DATASET_PATH:-"/global/scratch/mlperf_datasets/imagenet/"}
 nnodes=${SLURM_NTASKS:-1}
 nodeid=${SLURM_NODEID:-0}
 gbs=$((batch_size*gpus_per_node*nnodes))
-tag=gbs${gbs}_${gpus_per_node}GPUs_epoch${num_epochs}_${format}_lr${base_lr}_warmup${warmup}_lr-sched-${lr_sched}_node${nodeid}_$6
+tag=gbs${gbs}_${gpus_per_node}GPUs_epoch${num_epochs}_${format}_lr${base_lr}_warmup${warmup}_lr-sched-${lr_sched}_node${nodeid}
 submission_platform="MI200system"
 
 CMD="--amp --dynamic-loss-scale --lr-schedule ${lr_sched} --num-gpus $gpus_per_node \

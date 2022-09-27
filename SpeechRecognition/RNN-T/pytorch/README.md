@@ -79,75 +79,23 @@ Once the data is converted, the following additional files and folders should ex
 
 Now you can exit the container.
 
-## Steps to run benchmark.
-
-### Steps to launch training on a single node
-
-For training, we use Slurm with the Pyxis extension, and Slurm's MPI support to
-run our container.
-
-#### NVIDIA DGX A100 (single node)
-
-Launch configuration and system-specific hyperparameters for the appropriate
-NVIDIA DGX single node submission are in the `config_DGXA100.sh` script.
-
-Steps required to launch single node training:
-
-1. Build the container and push to a docker registry:
-```
-docker build --pull -t <docker/registry>/mlperf-nvidia:rnn_speech_recognition-pytorch .
-docker push <docker/registry>/mlperf-nvidia:rnn_speech_recognition-pytorch
-```
-2. Launch the training:
+### Steps to run benchmark.
 
 ```
-source config_DGXA100_1x8x192x1.sh
-CONT="<docker/registry>/mlperf-nvidia:rnn_speech_recognition-pytorch DATADIR=<path/to/data/dir> LOGDIR=<path/to/output/dir> METADATA_DIR=<path/to/metadata/dir> SENTENCEPIECES_DIR=<path/to/sentencepieces/dir> sbatch -N $DGXNNODES -t $WALLTIME run.sub
-```
+# Change the parameters in launch_example.sh to correct ones
+# Content of launch_example.sh
+# #!/usr/bin/env bash
 
-## Alternative launch with nvidia-docker
+# set -e -x
 
-When generating results for the official v1.0 submission with one node, the
-benchmark was launched onto a cluster managed by a SLURM scheduler. The
-instructions in [NVIDIA DGX A100 (single
-node)](#nvidia-dgx-a100-single-node) explain how that is done.
+# source config_MI210.sh
 
-However, to make it easier to run this benchmark on a wider set of machine
-environments, we are providing here an alternate set of launch instructions
-that can be run using nvidia-docker. Note that performance or functionality may
-vary from the tested SLURM instructions.
+# CONT=mlperf/rnn_speech_recognition DATADIR=/global/scratch/mlperf_datasets/rnnt/ LOGDIR=log METADATA_DIR=/global/scratch/mlperf_datasets/rnnt/tokenized/ SENTENCEPIECES_DIR=/global/scratch/mlperf_datasets/rnnt/sentencepieces/ bash ./run_with_docker.sh
+./launch_example.sh
 
-```
-docker build --pull -t mlperf-nvidia:rnn_speech_recognition-pytorch .
-source config_DGXA100_1x8x192x1.sh
-CONT=mlperf-nvidia:rnn_speech_recognition-pytorch DATADIR=<path/to/data/dir> LOGDIR=<path/to/output/dir> METADATA_DIR=<path/to/metadata/dir> SENTENCEPIECES_DIR=<path/to/sentencepieces/dir> bash ./run_with_docker.sh
-```
-
-## Steps to launch training on multiple nodes
-
-For multi-node training, we use Slurm for scheduling, and the Pyxis plugin to
-Slurm to run our container, and correctly configure the environment for Pytorch
-distributed execution.
-
-### NVIDIA DGX A100 (multi node)
-
-Launch configuration and system-specific hyperparameters for the NVIDIA DGX
-A100 16 node submission is in the `config_DGXA100_8x8x32x1.sh` script.
-Launch configuration and system-specific hyperparameters for the NVIDIA DGX
-A100 192 node submission is in the `config_DGXA100_192x8x4x1.sh.sh` script.
-
-Steps required to launch multi node training on NVIDIA DGX A100
-
-1. Build the docker container and push to a docker registry
-```
-docker build --pull -t <docker/registry>/mlperf-nvidia:rnn_speech_recognition-pytorch .
-docker push <docker/registry>/mlperf-nvidia:rnn_speech_recognition-pytorch
-```
-
-2. Launch the training
-```
-source config_DGXA100_8x8x32x1.sh # or config_DGXA100_192x8x4x1.sh
-CONT=<docker/registry>/mlperf-nvidia:rnn_speech_recognition-pytorch DATADIR=<path/to/data/dir> LOGDIR=<path/to/output/dir> METADATA_DIR=<path/to/metadata/dir> SENTENCEPIECES_DIR=<path/to/sentencepieces/dir> sbatch -N $DGXNNODES -t $WALLTIME run.sub
+# Above step will launch docker and mount current working directory to /workspace/rnnt
+# Inside the docker
+source config_MI210.sh && ./run.sh
 ```
 
 ### Hyperparameter settings

@@ -12,6 +12,7 @@ WORKDIR /src
 
 RUN git clone https://${USER}:${PASS}@github.com/AMD-ACP/MLPerf -b dev && \
     cd /src/MLPerf/ImageClassification/resnet50/pytorch && \
-    bash requirements.sh
+    bash requirements.sh && \
+    cd /src/MLPerf/ && rm -r .git
 
 

@@ -36,7 +36,7 @@ nnuma_nodes=$((nnuma_nodes < gpus_per_node ? nnuma_nodes : gpus_per_node))
 nsockets=`lscpu | grep "Socket(s)" | sed -e "s/.*:\s*//g"`
 ncores_per_socket=`lscpu | grep "Core(s) per socket:" | sed -e "s/.*:\s*//g"`
 
-CMD="python3 -u -m mlperf_utils.bind_launch --nnuma_nodes $nnuma_nodes --nsockets_per_node ${nsockets} --ncores_per_socket ${ncores_per_socket} --node_rank ${nodeid} --nnodes ${nnodes} --master_port 23456 --nproc_per_node ${gpus_per_node} ./src/main.py --num-nodes ${nnodes} ${CMD}"
+CMD="python3 -u -m mlperf_utils.bind_launch --no_membind --nnuma_nodes $nnuma_nodes --nsockets_per_node ${nsockets} --ncores_per_socket ${ncores_per_socket} --node_rank ${nodeid} --nnodes ${nnodes} --master_port 23456 --nproc_per_node ${gpus_per_node} ./src/main.py --num-nodes ${nnodes} ${CMD}"
 
 LOG=${OUTDIR}/r_torchDistMP_${tag}.${CURRENTDATE}.log
 

@@ -334,6 +334,7 @@ class RNNTGreedyDecoder:
     def _greedy_decode_batch(self, x, out_len):
         device = x.device
         B = x.size()[0]
+        f_g_len = torch.ones(B, dtype=torch.int32, device=device)
 
         hidden = None
         assert self.max_symbol_per_sample is not None, "max_symbol_per_sample needs to be specified in order to use batch_eval"
@@ -368,8 +369,8 @@ class RNNTGreedyDecoder:
             # logp = torch.zeros(B, 29, dtype=x.dtype, device=device)
             # for i in range(B):
             #     logp[i, :] = self._joint_step(model, f[i].unsqueeze(0), g[i].unsqueeze(0), log_normalize=False)
-
-            logp = self._joint_step(self.model, f, g, log_normalize=False)
+            # logp = self._joint_step(self.model, f, g, log_normalize=False)
+            logp = self.model.joint(f, g, f_g_len)[:, 0, 0, :]
             # get index k, of max prob
             v, k = logp.max(1)
             k = k.int()

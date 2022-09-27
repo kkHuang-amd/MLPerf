@@ -21,7 +21,7 @@
 set -e
 
 # Only rank print
-[ "${SLURM_LOCALID-}" -ne 0 ] && set +x
+# [ "${SLURM_LOCALID-}" -ne 0 ] && set +x
 
 : "${AMP_LVL:=1}"
 : "${DALIDEVICE:=cpu}"
@@ -144,8 +144,8 @@ ARGS="train.py \
   --log_frequency=${LOG_FREQUENCY} \
   --val_frequency=$VAL_FREQUENCY \
   --grad_accumulation_steps=$GRAD_ACCUMULATION_STEPS \
-  --prediction_frequency=1000000 \
   --weights_init_scale=${WEIGHTS_INIT_SCALE} \
+  --prediction_frequency=10000000 \
   --val_manifests=${VAL_MANIFESTS} \
   --train_manifests ${TRAIN_MANIFESTS}"
 

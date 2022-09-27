@@ -115,7 +115,7 @@ class Joint(nn.Module):
                                         dropout_prob=dropout_prob)
     def forward(self, f, g, f_len, dict_meta_data):
         # Combine the input states and the output states
-        if self.apex_transducer_joint is None or f_len is None:
+        if self.apex_transducer_joint is None:
             # PyTorch joint
             f = f.unsqueeze(dim=2)   # (B, T, 1, H)
             g = g.unsqueeze(dim=1)   # (B, 1, U + 1, H)

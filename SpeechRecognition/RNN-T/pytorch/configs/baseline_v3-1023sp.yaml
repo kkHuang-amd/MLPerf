@@ -1,4 +1,4 @@
-# Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2020-2022, NVIDIA CORPORATION. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 #
 
 tokenizer:
-    sentpiece_model: /data/sentencepieces/librispeech1023.model
+    sentpiece_model: /sentencepieces/librispeech1023.model
     labels: [" ", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
              "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "'"]
 
@@ -39,6 +39,9 @@ input_val:
   frame_splicing: &val_splicing
     frame_stacking: 3
     frame_subsampling: 3
+  pad_align: &val_pad_align
+    pad_align_time: 1   # warp-transducer dislikes unnecessary padding
+    pad_align_freq: 32
 
 # For training we keep samples < 16.7s and apply augmentation
 input_train:
@@ -52,6 +55,9 @@ input_train:
 
   filterbank_features: *val_features
   frame_splicing: *val_splicing
+  pad_align:
+    <<: *val_pad_align
+    max_duration: 16.7
 
   spec_augment:
     freq_masks: 2
@@ -62,7 +68,9 @@ input_train:
     max_time: 0.03
 
 rnnt:
-  in_feats: 240  # n_filt x frame_stacking
+  in_feats: 256  # n_filt x frame_stacking (+ padding to 32)
+  # init: xavier_uniform
+  # activation: relu
 
   enc_n_hid: 1024
   enc_pre_rnn_layers: 2
@@ -78,3 +86,4 @@ rnnt:
   joint_dropout: 0.3
 
   forget_gate_bias: 1.0
+  decoupled_rnns: true

@@ -1,32 +1,31 @@
 # 1. Problem 
 Speech recognition accepts raw audio samples and produces a corresponding text transcription.
 
+## Requirements
+* [PyTorch 22.04-py3 NGC container](https://ngc.nvidia.com/registry/nvidia-pytorch)
+* Slurm with [Pyxis](https://github.com/NVIDIA/pyxis) and [Enroot](https://github.com/NVIDIA/enroot) (multi-node)
+* [nvidia-docker](https://github.com/NVIDIA/nvidia-docker) (single-node)
+
 # 2. Directions
 
-## Steps to configure machine
-### From Docker
-1. Clone the repository
-```bash
-git clone https://github.com/mlcommon/training.git
-```
-2. Build the docker image for the single stage detection task
-```bash
-# Build from Dockerfile
-cd training/rnn_speech_recognition/pytorch/
-bash build_docker.sh # Will create a docker image named 'rnnt_train' for training run.
-```
-
 ## Steps to download data
-1. Start an interactive session in the NGC container to run data download/training/inference
+1. Build the container.
+
+Running the following scripts will build and launch the container which contains all the required dependencies for data download and processing as well as training and inference of the model.
+
 ```
-bash scripts/docker/build.sh # Build another docker to preprocess data
-bash scripts/docker/launch.sh <DATA_DIR> <CHECKPOINT_DIR> <RESULTS_DIR>
+bash scripts/docker/build.sh
 ```
 
-Within the container, the contents of this repository will be copied to the `/workspace/rnnt` directory. The `/datasets`, `/checkpoints`, `/results` directories are mounted as volumes
-and mapped to the corresponding directories `<DATA_DIR>`, `<CHECKPOINT_DIR>`, `<RESULT_DIR>` on the host.
+2. Start an interactive session in the NGC container to run data download/training/inference
+```
+bash scripts/docker/launch.sh <DATA_DIR> <CHECKPOINT_DIR> <RESULTS_DIR> <METADATA_DIR> <SENTENCEPIECES_DIR>
+```
 
-2. Download and preprocess the dataset.
+Within the container, the contents of this repository will be copied to the `/workspace/rnnt` directory. The `/datasets`, `/checkpoints`, `/results`, `/tokenized`, `/sentencepieces` directories are mounted as volumes
+and mapped to the corresponding directories `<DATA_DIR>`, `<CHECKPOINT_DIR>`, `<RESULT_DIR>`, `<METADATA_DIR>`, `<SENTENCEPIECES_DIR>` on the host.
+
+3. Download and preprocess the dataset.
 
 No GPU is required for data download and preprocessing. Therefore, if GPU usage is a limited resource, launch the container for this section on a CPU machine by following prevoius steps.
 
@@ -75,41 +74,85 @@ Once the data is converted, the following additional files and folders should ex
    * `dev-other-wav/`
    * `test-clean-wav/`
    * `test-other-wav/`
+* `datasets/sentencepieces`
+* `tokenized/`
 
-For training, the following manifest files are used:
-   * `librispeech-train-clean-100-wav.json`
-   * `librispeech-train-clean-360-wav.json`
-   * `librispeech-train-other-500-wav.json`
-
-For evaluation, the `librispeech-dev-clean-wav.json` is used.
+Now you can exit the container.
 
 ## Steps to run benchmark.
 
-### Steps to launch training
+### Steps to launch training on a single node
 
-Once the docker is built, launch docker with following script.
+For training, we use Slurm with the Pyxis extension, and Slurm's MPI support to
+run our container.
 
-```bash
-# Working directory: training/rnn_speech_recognition/pytorch
-# Point to preprocessed data on the host (see Step 3), with mount to /data/ inside container
-LIBRISPEECH=<DATA_DIR>/LibriSpeech SENTENCEPIECES=<DATA_DIR>/sentencepieces ./run_docker.sh
+#### NVIDIA DGX A100 (single node)
+
+Launch configuration and system-specific hyperparameters for the appropriate
+NVIDIA DGX single node submission are in the `config_DGXA100.sh` script.
+
+Steps required to launch single node training:
+
+1. Build the container and push to a docker registry:
+```
+docker build --pull -t <docker/registry>/mlperf-nvidia:rnn_speech_recognition-pytorch .
+docker push <docker/registry>/mlperf-nvidia:rnn_speech_recognition-pytorch
+```
+2. Launch the training:
+
+```
+source config_DGXA100_1x8x192x1.sh
+CONT="<docker/registry>/mlperf-nvidia:rnn_speech_recognition-pytorch DATADIR=<path/to/data/dir> LOGDIR=<path/to/output/dir> METADATA_DIR=<path/to/metadata/dir> SENTENCEPIECES_DIR=<path/to/sentencepieces/dir> sbatch -N $DGXNNODES -t $WALLTIME run.sub
 ```
 
-Inside the container, use the following script to start training.
-Make sure the downloaded and preprocessed dataset is located at `<DATA_DIR>/LibriSpeech` on the host (see Step 3), which corresponds to `/data/LibriSpeech` inside the container.
+## Alternative launch with nvidia-docker
 
-```bash
-# Enter docker with: docker attach container_rnnt_train
-cd /workspace
-./run.sh
+When generating results for the official v1.0 submission with one node, the
+benchmark was launched onto a cluster managed by a SLURM scheduler. The
+instructions in [NVIDIA DGX A100 (single
+node)](#nvidia-dgx-a100-single-node) explain how that is done.
+
+However, to make it easier to run this benchmark on a wider set of machine
+environments, we are providing here an alternate set of launch instructions
+that can be run using nvidia-docker. Note that performance or functionality may
+vary from the tested SLURM instructions.
+
+```
+docker build --pull -t mlperf-nvidia:rnn_speech_recognition-pytorch .
+source config_DGXA100_1x8x192x1.sh
+CONT=mlperf-nvidia:rnn_speech_recognition-pytorch DATADIR=<path/to/data/dir> LOGDIR=<path/to/output/dir> METADATA_DIR=<path/to/metadata/dir> SENTENCEPIECES_DIR=<path/to/sentencepieces/dir> bash ./run_with_docker.sh
 ```
 
-This script tries to use 4 GPUs by default.
-To run 1-gpu training, use the following command:
+## Steps to launch training on multiple nodes
 
-```bash
-NUM_GPUS=1 ./run.sh
+For multi-node training, we use Slurm for scheduling, and the Pyxis plugin to
+Slurm to run our container, and correctly configure the environment for Pytorch
+distributed execution.
+
+### NVIDIA DGX A100 (multi node)
+
+Launch configuration and system-specific hyperparameters for the NVIDIA DGX
+A100 16 node submission is in the `config_DGXA100_8x8x32x1.sh` script.
+Launch configuration and system-specific hyperparameters for the NVIDIA DGX
+A100 192 node submission is in the `config_DGXA100_192x8x4x1.sh.sh` script.
+
+Steps required to launch multi node training on NVIDIA DGX A100
+
+1. Build the docker container and push to a docker registry
 ```
+docker build --pull -t <docker/registry>/mlperf-nvidia:rnn_speech_recognition-pytorch .
+docker push <docker/registry>/mlperf-nvidia:rnn_speech_recognition-pytorch
+```
+
+2. Launch the training
+```
+source config_DGXA100_8x8x32x1.sh # or config_DGXA100_192x8x4x1.sh
+CONT=<docker/registry>/mlperf-nvidia:rnn_speech_recognition-pytorch DATADIR=<path/to/data/dir> LOGDIR=<path/to/output/dir> METADATA_DIR=<path/to/metadata/dir> SENTENCEPIECES_DIR=<path/to/sentencepieces/dir> sbatch -N $DGXNNODES -t $WALLTIME run.sub
+```
+
+### Hyperparameter settings
+
+Hyperparameters are recorded in the `config_*.sh` files for each configuration and in `run_and_time.sh`.
 
 # 3. Dataset/Environment
 ### Publication/Attribution
@@ -121,15 +164,15 @@ Data preprocessing is described by scripts mentioned in the [Steps to download d
 ### Data pipeline
 Transcripts are encoded to sentencepieces using model produced in [Steps to download data](#steps-to-download-data).
 Audio processing consists of the following steps:
-1. audio is decoded with sample rate choosen uniformly between 13800 and 18400 ([code](./common/data/dali/pipeline.py#L91-L97));
-2. silience is trimmed with -60 dB threshold (datails in the [DALI documentation](https://docs.nvidia.com/deeplearning/dali/archives/dali_0280/user-guide/docs/supported_ops.html?highlight=nonsilentregion#nvidia.dali.ops.NonsilentRegion)) ([code](./common/data/dali/pipeline.py#L120-L121));
-3. random noise with normal distribution and 0.00001 amplitude is applied to reduce quantization effect (dither) ([code](/common/data/dali/pipeline.py#L197));
-4. Pre-emphasis filter is applied (details in the [DALI documentation](https://docs.nvidia.com/deeplearning/dali/archives/dali_0280/user-guide/docs/supported_ops.html?highlight=nonsilentregion#nvidia.dali.ops.PreemphasisFilter) ([code](./common/data/dali/pipeline.py#L101));
-1. spectograms are calculated with 512 ffts, 20ms window and 10ms stride ([code](./common/data/dali/pipeline.py#L103-L105));
-1. MelFilterBanks are calculated with 80 features and normalization ([code](./common/data/dali/pipeline.py#L107-L108));
-1. features are translated to decibeles with log(10) multiplier reference magnitude 1 and 1e-20 cutoff (details in the [DALI documentation](https://docs.nvidia.com/deeplearning/dali/archives/dali_0280/user-guide/docs/supported_ops.html?highlight=nonsilentregion#nvidia.dali.ops.ToDecibels)) ([code](./common/data/dali/pipeline.py#L110-L111));
-1. features are normalized along time dimension using algorithm described in the [normalize operator documentation](https://docs.nvidia.com/deeplearning/dali/user-guide/docs/examples/general/normalize.html) ([code](common/data/dali/pipeline.py#L115));
-1. In the train pipeline, an adaptive specaugment augmentation is applied ([arxiv](https://arxiv.org/abs/1912.05533), [code](https://github.com/mwawrzos/training/blob/rnnt/rnn_speech_recognition/pytorch/common/data/features.py#L44-L117)). In the evaluation pipeline, this step is omitted;
+1. audio is decoded with sample rate choosen uniformly between 13800 and 18400;
+2. silience is trimmed with -60 dB threshold (datails in the [DALI documentation](https://docs.nvidia.com/deeplearning/dali/archives/dali_0280/user-guide/docs/supported_ops.html?highlight=nonsilentregion#nvidia.dali.ops.NonsilentRegion));
+3. random noise with normal distribution and 0.00001 amplitude is applied to reduce quantization effect (dither);
+4. Pre-emphasis filter is applied (details in the [DALI documentation](https://docs.nvidia.com/deeplearning/dali/archives/dali_0280/user-guide/docs/supported_ops.html?highlight=nonsilentregion#nvidia.dali.ops.PreemphasisFilter);
+1. spectograms are calculated with 512 ffts, 20ms window and 10ms stride;
+1. MelFilterBanks are calculated with 80 features and normalization;
+1. features are translated to decibeles with log(10) multiplier reference magnitude 1 and 1e-20 cutoff (details in the [DALI documentation](https://docs.nvidia.com/deeplearning/dali/archives/dali_0280/user-guide/docs/supported_ops.html?highlight=nonsilentregion#nvidia.dali.ops.ToDecibels));
+1. features are normalized along time dimension using algorithm described in the [normalize operator documentation](https://docs.nvidia.com/deeplearning/dali/user-guide/docs/examples/general/normalize.html);
+1. In the train pipeline, an addaptive specaugment augmentation is applied ([arxiv](https://arxiv.org/abs/1912.05533), [code](https://github.com/mwawrzos/training/blob/rnnt/rnn_speech_recognition/pytorch/common/data/features.py#L44-L117)). In the evaluation pipeline, this step is omitted;
 1. to reduce accelerator memory usage, frames are spliced (stacked three times, and subsampled three times) ([code](https://github.com/mwawrzos/training/blob/rnnt/rnn_speech_recognition/pytorch/common/data/features.py#L144-L165));
 
 ### Training and test data separation
@@ -140,15 +183,15 @@ To reduce data padding in minibatches, data bucketing is applied.
 The algorithm is implemented here:
 [link](https://github.com/mlcommons/training/blob/2126999a1ffff542064bb3208650a1e673920dcf/rnn_speech_recognition/pytorch/common/data/dali/sampler.py#L65-L105)
 and can be described as follows:
-1. drop samples longer than a given threshold ([code](./common/data/dali/data_loader.py#L97-L98));
-1. sort data by audio length ([code](./common/data/dali/sampler.py#L69));
-2. split data into 6 equally sized buckets ([code](./common/data/dali/sampler.py#L70));
+0. drop samples longer than a given threshold;
+1. sort data by audio length;
+2. split data into 6 equally sized buckets;
 3. for every epochs:
-    1. shuffle data in each bucket ([code](common/data/dali/sampler.py#L73-L78));
-    2. as long as all samples are not divisible by global batch size, remove random element from random bucket ([code](./common/data/dali/sampler.py#L82-L86));
+    1. shuffle data in each bucket;
+    2. as long as all samples are not divisible by global batch size, remove random element from random bucket;
     3. concatenate all buckets;
-    4. split samples into minibatches ([code](./common/data/dali/sampler.py#L90));
-    5. shuffle minibatches in the epoch ([code](./common/data/dali/sampler.py#L93-L94)).
+    4. split samples into minibatches;
+    5. shuffle minibatches in the epoch.
 
 ### Test data order
 Test data order is the same as in the dataset.
@@ -160,7 +203,7 @@ or another publicly available dataset of reasonable size. For that reason, the r
 collection of solutions from several works. It is based on the following articles:
 * Graves 2012 - an invention of RNN-Transducer: https://arxiv.org/abs/1211.3711
 * Rao 2018 - time reduction in the acoustic model, internal dataset: https://arxiv.org/abs/1801.00841
-* Zhang 2020 - Transformer-transducer publication. It includes bi-directional LSTM RNN-T result on LibriSpeech: https://arxiv.org/abs/2002.02562
+* Zhang 2020 - Bi-directional LSTM RNN-T result on LibriSpeech: https://arxiv.org/abs/2002.02562
 * Park 2019 - adaptive spec augment, internal dataset: https://arxiv.org/abs/1912.05533
 * Guo 2020 - RNN-T trained with vanilla LSTM, internal dataset: https://arxiv.org/abs/2007.13802
 
@@ -169,20 +212,17 @@ Model structure is described in the following picture:
 ![model layers structure](./rnnt_layers.svg "RNN-T model structure")
 
 ### Weight and bias initialization
-* In all fully connected layers, weights and biases are initialized as defined in the [Pytorch 1.7.0 torch.nn.Linear documentation](https://pytorch.org/docs/1.7.0/generated/torch.nn.Linear.html#torch.nn.Linear) ([code](./rnnt/model.py#L123-L137)).
-* In the embeding layer, weights are initialized as defined in the [Pytorch 1.7.0 torch.nn.Embeding documentation](https://pytorch.org/docs/1.7.0/generated/torch.nn.Embedding.html#torch.nn.Embedding) ([code](./rnnt/model.py#L105)).
+* In all fully connected layers, weights and biases are initialized as defined in the [Pytorch 1.7.0 torch.nn.Linear documentation](https://pytorch.org/docs/1.7.0/generated/torch.nn.Linear.html#torch.nn.Linear).
+* In the embeding layer, weights are initialized as defined in the [Pytorch 1.7.0 torch.nn.Embeding documentation](https://pytorch.org/docs/1.7.0/generated/torch.nn.Embedding.html#torch.nn.Embedding).
 * In all LSTM layers:
-    * weights and biases are initialized as defined in the [Pytorch 1.7.0 torch.nn.LSTM documentation](https://pytorch.org/docs/1.7.0/generated/torch.nn.LSTM.html#torch.nn.LSTM) ([code](./common/rnn.py#L56-L61)),
-    * forget gate biases are set to 1 ([code](./common/rnn.py#L67-L69)),
-    * then the weights and bias values are divided by two (in result, the forget gate biases are set to 0.5) ([code](./common/rnn.py#L74-L76)).
+    * weights and biases are initialized as defined in the [Pytorch 1.7.0 torch.nn.LSTM documentation](https://pytorch.org/docs/1.7.0/generated/torch.nn.LSTM.html#torch.nn.LSTM),
+    * then they weights and biases values are divided by two,
+    * forget gate biases are set to $0$.
 
 ### Loss function
-Transducer Loss 
+Transducer Loss
 ### Optimizer
 RNN-T benchmark uses LAMB optimizer. More details are in [training policies](https://github.com/mlcommons/training_policies/blob/master/training_rules.adoc#appendix-allowed-optimizers).
-
-To decrease the number of epochs needed to reach the target accuracy,
-evaluation is done with an exponential moving average of the trained model weights with a smoothing factor set to 0.999.
 
 # 5. Quality
 ### Quality metric

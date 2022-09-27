@@ -1,4 +1,4 @@
-# Copyright (c) 2019-2020, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2019-2022, NVIDIA CORPORATION. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -47,4 +47,6 @@ python ./utils/convert_librispeech.py \
     --dest_dir /datasets/LibriSpeech/test-other-wav \
     --output_json /datasets/LibriSpeech/librispeech-test-other-wav.json
 
-bash scripts/create_sentencepieces.sh
+bash scripts/create_sentencepieces.sh /sentencepieces
+
+python scripts/tokenize_transcripts.py --output_dir /metadata/ --model /sentencepieces/librispeech1023.model /datasets/LibriSpeech/librispeech-*.json

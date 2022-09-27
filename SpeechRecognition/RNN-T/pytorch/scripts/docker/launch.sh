@@ -1,4 +1,4 @@
-# Copyright (c) 2019-2020, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2019-2022, NVIDIA CORPORATION. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,15 +18,20 @@
 DATA_DIR=$1
 CHECKPOINT_DIR=$2
 RESULT_DIR=$3
+METADATA_DIR=$4
+SENTENCEPIECES_DIR=$5
 
-docker run -it --rm \
-  --network host --device=/dev/kfd --group-add=video \
-  --cap-add=SYS_PTRACE --cap-add SYS_ADMIN --device /dev/fuse \
-  --security-opt seccomp=unconfined --ipc=host --device=/dev/dri \
+
+readonly _docker_gpu_args="--device=/dev/kfd --group-add=video \
+	--cap-add=SYS_PTRACE --cap-add SYS_ADMIN --device /dev/fuse --device=/dev/dri"
+
+docker run ${_docker_gpu_args} -it --rm \
   --shm-size=4g \
   --ulimit memlock=-1 \
   --ulimit stack=67108864 \
   -v "$DATA_DIR":/datasets \
+  -v "$METADATA_DIR":/metadata \
+  -v "$SENTENCEPIECES_DIR":/sentencepieces \
   -v "$CHECKPOINT_DIR":/checkpoints/ \
   -v "$RESULT_DIR":/results/ \
   -v $PWD:/code \

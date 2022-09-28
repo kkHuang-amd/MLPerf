@@ -1,3 +1,17 @@
+# Copyright (c) 2021-2022, NVIDIA CORPORATION. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#           http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import functools
 import tempfile
 import copy
@@ -15,6 +29,7 @@ import pycocotools.mask as mask_util
 from collections import defaultdict
 
 import utils
+
 
 
 class CocoEvaluator(object):
@@ -58,11 +73,11 @@ class CocoEvaluator(object):
                 [
                     {
                         "image_id": original_id,
-                        "category_id": labels[k],
-                        "bbox": box,
-                        "score": scores[k],
+                        "category_id": label,
+                        "bbox": bbox,
+                        "score": score,
                     }
-                    for k, box in enumerate(boxes)
+                    for (bbox, label, score) in zip(boxes, labels, scores)
                 ]
             )
         return coco_results
@@ -128,6 +143,7 @@ class CocoEvaluator(object):
             )
         return coco_results
 
+
 class DefaultCocoEvaluator(CocoEvaluator):
     def __init__(self, coco_gt, iou_types):
         assert isinstance(iou_types, (list, tuple))
@@ -149,7 +165,7 @@ class DefaultCocoEvaluator(CocoEvaluator):
         self.eval_imgs = {k: [] for k in self.iou_types}
 
     def update(self, predictions):
-        img_ids = list(np.unique(list(predictions.keys())))
+        img_ids = list(set(predictions.keys()))
         self.img_ids.extend(img_ids)
 
         for iou_type in self.iou_types:
@@ -168,19 +184,93 @@ class DefaultCocoEvaluator(CocoEvaluator):
             evalImgs = np.asarray(coco_eval.evalImgs).reshape(len(catIds), len(areaRng), len(imgIds))
             self.eval_imgs[iou_type].append(evalImgs)
 
-    def synchronize_between_processes(self):
+    def synchronize_between_processes(self, group=None):
         for iou_type in self.iou_types:
             self.eval_imgs[iou_type] = np.concatenate(self.eval_imgs[iou_type], 2)
-            create_common_coco_eval(self.coco_eval[iou_type], self.img_ids, self.eval_imgs[iou_type])
+            create_common_coco_eval(self.coco_eval[iou_type], self.img_ids, self.eval_imgs[iou_type], group=group)
+
+
+class NVCocoEvaluator(CocoEvaluator):
+    def __init__(self, annotations_file, iou_types, num_threads=1, group=None):
+        assert isinstance(iou_types, (list, tuple))
+        self.coco_gt = None
+        self.annotations_file = annotations_file
+        self.num_threads = num_threads
+        self.iou_types = iou_types
+        self.coco_eval = {}
+        self._results = {}
+        for iou_type in iou_types:
+            self._results[iou_type] = []
+
+    @property
+    def results(self):
+        return self._results
+
+    def reset(self):
+        self.coco_eval = {}
+        for iou_type in self.iou_types:
+            self._results[iou_type] = []
+
+    def update(self, predictions):
+        for iou_type in self.iou_types:
+            results = self.prepare(predictions, iou_type)
+            self._results[iou_type].extend(results)
+
+    def synchronize_between_processes(self, group=None):
+        for iou_type in self.iou_types:
+            gathered_results = utils.all_gather(self._results[iou_type], group=group)
+            self._results[iou_type] = []
+            for result in gathered_results:
+                self._results[iou_type].extend(result)
+
+    def accumulate(self):
+        if self.coco_gt is None:
+            self.coco_gt = get_coco_gt(annotations_file=self.annotations_file, use_ext=True)
+
+        for iou_type in self.iou_types:
+            results = self._results[iou_type]
+            coco_gt = self.coco_gt
+
+            with redirect_stdout(None):
+                coco_dt = coco_gt.loadRes(results, use_ext=True, print_res=False) if results else COCO(use_ext=True)
+                coco_eval = COCOeval(coco_gt, coco_dt, iouType=iou_type, num_threads=self.num_threads, use_ext=True)
+                coco_eval.evaluate()
+                coco_eval.accumulate()
+
+            self.coco_eval[iou_type] = coco_eval
+
+
+def static_nvcocoevaluator(results, annotations_file, num_threads):
+    coco_gt = get_coco_gt(annotations_file=annotations_file, use_ext=True)
+    stats = {}
+    for iou_type in results.keys():
+        coco_eval = None
+        with redirect_stdout(None):
+            coco_dt = coco_gt.loadRes(results[iou_type], use_ext=True, print_res=False) if results[iou_type] else COCO(use_ext=True)
+            coco_eval = COCOeval(coco_gt, coco_dt, iouType=iou_type, num_threads=num_threads, use_ext=True)
+            coco_eval.evaluate()
+            coco_eval.accumulate()
+
+        print("IoU metric: {}".format(iou_type))
+        coco_eval.summarize()
+        stats[iou_type] = coco_eval.stats
+
+    return stats
+
+
+@functools.lru_cache(maxsize=None)
+def get_coco_gt(annotations_file, use_ext):
+    return COCO(annotation_file=annotations_file, use_ext=use_ext)
+
 
 def convert_to_xywh(boxes):
     xmin, ymin, xmax, ymax = boxes.unbind(1)
     return torch.stack((xmin, ymin, xmax - xmin, ymax - ymin), dim=1)
 
 
-def merge(img_ids, eval_imgs):
-    all_img_ids = utils.all_gather(img_ids)
-    all_eval_imgs = utils.all_gather(eval_imgs)
+def merge(img_ids, eval_imgs, group=None):
+    all_img_ids = utils.all_gather(img_ids, group=group)
+    all_eval_imgs = utils.all_gather(eval_imgs, group=group)
 
     merged_img_ids = []
     for p in all_img_ids:
@@ -200,8 +290,8 @@ def merge(img_ids, eval_imgs):
     return merged_img_ids, merged_eval_imgs
 
 
-def create_common_coco_eval(coco_eval, img_ids, eval_imgs):
-    img_ids, eval_imgs = merge(img_ids, eval_imgs)
+def create_common_coco_eval(coco_eval, img_ids, eval_imgs, group=None):
+    img_ids, eval_imgs = merge(img_ids, eval_imgs, group=group)
     img_ids = list(img_ids)
     eval_imgs = list(eval_imgs.flatten())
 

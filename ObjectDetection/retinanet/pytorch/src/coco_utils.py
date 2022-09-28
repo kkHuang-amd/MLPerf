@@ -1,3 +1,17 @@
+# Copyright (c) 2021-2022, NVIDIA CORPORATION. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#           http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import copy
 import os
 from PIL import Image
@@ -185,46 +199,25 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         return img, target
 
 
-def get_coco(name, root, image_set, transforms, mode='instances'):
-    anno_file_template = "{}_{}2017.json"
-    PATHS = {
-        "train": ("train2017", os.path.join("annotations", anno_file_template.format(mode, "train"))),
-        "val": ("val2017", os.path.join("annotations", anno_file_template.format(mode, "val"))),
-    }
-
+def get_coco(dataset_path, annotations_file, transforms, training=True):
     t = [ConvertCocoPolysToMask(filter_iscrowd=True)]
-
     if transforms is not None:
         t.append(transforms)
     transforms = T.Compose(t)
 
-    img_folder, ann_file = PATHS[image_set]
-    img_folder = os.path.join(root, img_folder)
-    ann_file = os.path.join(root, ann_file)
+    dataset = CocoDetection(dataset_path, annotations_file, transforms=transforms)
 
-    dataset = CocoDetection(img_folder, ann_file, transforms=transforms)
-
-    if image_set == "train":
+    if training:
         dataset = _coco_remove_images_without_annotations(dataset)
 
     return dataset
 
 
-def get_openimages(name, root, image_set, transforms):
-    PATHS = {
-        "train": os.path.join(root, "train"),
-        "val":   os.path.join(root, "validation"),
-    }
-
+def get_openimages(dataset_path, annotations_file, transforms, training=True):
     t = [ConvertCocoPolysToMask(filter_iscrowd=False)]
-
     if transforms is not None:
         t.append(transforms)
     transforms = T.Compose(t)
 
-    img_folder = os.path.join(PATHS[image_set], "data")
-    ann_file = os.path.join(PATHS[image_set], "labels", f"{name}.json")
-
-    dataset = CocoDetection(img_folder, ann_file, transforms=transforms)
-
+    dataset = CocoDetection(dataset_path, annotations_file, transforms=transforms)
     return dataset

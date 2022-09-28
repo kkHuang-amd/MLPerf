@@ -75,11 +75,15 @@ PARAMS=(
       --eval-batch-size         "${EVALBATCHSIZE}"
       --epochs                  "${NUMEPOCHS}"
       --print-freq              "${LOG_INTERVAL}"
-      --data-path               "${DATASET_DIR}"
+      --dataset-path               "${DATASET_DIR}"
 )
 
 # run training
-"${CMD[@]}" ./src/train.py "${PARAMS[@]}" ${EXTRA_PARAMS} ; ret_code=$?
+gbs=$((BATCHSIZE*DGXNGPU))
+CURRENTDATE=`date +"%Y-%m-%d-%T"`
+LOG=r_torchDist_gbs${gbs}_${DGXNGPU}GPUs_epoch${NUMEPOCHS}_${CURRENTDATE}.log
+"${CMD[@]}" ./src/train.py "${PARAMS[@]}" ${EXTRA_PARAMS} 2>&1 | tee ${LOG}
+ret_code=$?
 
 set +x
 
@@ -89,10 +93,10 @@ if [[ $ret_code != 0 ]]; then exit $ret_code; fi
 # end timing
 end=$(date +%s)
 end_fmt=$(date +%Y-%m-%d\ %r)
-echo "ENDING TIMING RUN AT $end_fmt"
+echo "ENDING TIMING RUN AT $end_fmt" | tee -a ${LOG}
 
 # report result
 result=$(( $end - $start ))
 result_name="SINGLE_STAGE_DETECTOR"
 
-echo "RESULT,$result_name,,$result,nvidia,$start_fmt"
+echo "RESULT,$result_name,,$result,nvidia,$start_fmt"  | tee -a ${LOG}

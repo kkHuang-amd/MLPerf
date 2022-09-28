@@ -4,7 +4,7 @@
 export BATCHSIZE=32
 export NUMEPOCHS=${NUMEPOCHS:-8}
 export DATASET_DIR=${DATASET_PATH:-"/global/scratch/mlperf_datasets/open-images-v6/"}
-export EXTRA_PARAMS='--lr 0.0001 --amp'
+export EXTRA_PARAMS='--lr 0.0001 --amp --apex-focal-loss --apex-adam --frozen-bn-fp16 --fp16-allreduce'
 #export EXTRA_PARAMS='--lr 0.0001 --amp --output-dir=./results'
 
 ## System run parms

@@ -1,3 +1,17 @@
+# Copyright (c) 2021-2022, NVIDIA CORPORATION. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#           http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import math
 import torch
 from torch import nn, Tensor
@@ -115,17 +129,40 @@ class AnchorGenerator(nn.Module):
 
         return anchors
 
-    def forward(self, image_list: ImageList, feature_maps: List[Tensor]) -> List[Tensor]:
+    def forward(self, image_list: Tensor, feature_maps: List[Tensor]) -> List[Tensor]:
         grid_sizes = [feature_map.shape[-2:] for feature_map in feature_maps]
-        image_size = image_list.tensors.shape[-2:]
+        image_size = image_list.shape[-2:]
         dtype, device = feature_maps[0].dtype, feature_maps[0].device
         strides = [[torch.tensor(image_size[0] // g[0], dtype=torch.int64, device=device),
                     torch.tensor(image_size[1] // g[1], dtype=torch.int64, device=device)] for g in grid_sizes]
         self.set_cell_anchors(dtype, device)
         anchors_over_all_feature_maps = self.grid_anchors(grid_sizes, strides)
         anchors: List[List[torch.Tensor]] = []
-        for _ in range(len(image_list.image_sizes)):
+        for _ in range(image_list.size(0)):
             anchors_in_image = [anchors_per_feature_map for anchors_per_feature_map in anchors_over_all_feature_maps]
             anchors.append(anchors_in_image)
         anchors = [torch.cat(anchors_per_image) for anchors_per_image in anchors]
+        return anchors
+
+    def forward_opt(self, image_shape: torch.Size = None, grid_sizes: List[torch.Size] = None,
+                    device: torch.device = None, dtype=torch.float16):
+        assert(device is not None)
+
+        image_size = torch.Size([800, 800]) if image_shape is None else image_shape[-2:]
+        grid_sizes = [torch.Size([100, 100]), torch.Size([50, 50]),
+                      torch.Size([25, 25]), torch.Size([13, 13]),
+                      torch.Size([7, 7])] if grid_sizes is None else grid_sizes
+
+        strides = [[torch.tensor(image_size[0] // g[0], dtype=torch.int64, device=device),
+                    torch.tensor(image_size[1] // g[1], dtype=torch.int64, device=device)] for g in grid_sizes]
+
+        self.set_cell_anchors(dtype, device)
+
+        anchors_over_all_feature_maps = self.grid_anchors(grid_sizes, strides)
+        anchors: List[List[torch.Tensor]] = []
+        for _ in range(image_shape[0]):
+            anchors_in_image = [anchors_per_feature_map for anchors_per_feature_map in anchors_over_all_feature_maps]
+            anchors.append(anchors_in_image)
+        anchors = [torch.cat(anchors_per_image) for anchors_per_image in anchors]
+
         return anchors

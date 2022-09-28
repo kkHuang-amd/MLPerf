@@ -1,3 +1,17 @@
+# Copyright (c) 2021-2022, NVIDIA CORPORATION. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#           http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import math
 import torch
 
@@ -5,7 +19,7 @@ from collections import OrderedDict
 from torch import Tensor, nn
 from typing import List, Tuple, Dict
 
-from torchvision.ops.misc import FrozenBatchNorm2d
+from .frozen_bn import FrozenBatchNorm2d
 
 
 class IntermediateLayerGetter(nn.ModuleDict):
@@ -119,6 +133,56 @@ def encode_boxes(reference_boxes, proposals, weights):
     return targets
 
 
+# Similar to encode_boxes, but accepts tensors with batch dimension
+@torch.jit._script_if_tracing
+def encode_boxes_batch(reference_boxes, proposals, weights):
+    # type: (torch.Tensor, torch.Tensor, torch.Tensor) -> torch.Tensor
+    """
+    Encode a set of proposals with respect to some
+    reference boxes
+
+    Args:
+        reference_boxes (Tensor): reference boxes
+        proposals (Tensor): boxes to be encoded
+        weights (Tensor[4]): the weights for ``(x, y, w, h)``
+    """
+
+    # perform some unpacking to make it JIT-fusion friendly
+    wx = weights[0]
+    wy = weights[1]
+    ww = weights[2]
+    wh = weights[3]
+
+    proposals_x1 = proposals[:, :, 0]
+    proposals_y1 = proposals[:, :, 1]
+    proposals_x2 = proposals[:, :, 2]
+    proposals_y2 = proposals[:, :, 3]
+
+    reference_boxes_x1 = reference_boxes[:, :, 0]
+    reference_boxes_y1 = reference_boxes[:, :, 1]
+    reference_boxes_x2 = reference_boxes[:, :, 2]
+    reference_boxes_y2 = reference_boxes[:, :, 3]
+
+    # implementation starts here
+    ex_widths = proposals_x2 - proposals_x1
+    ex_heights = proposals_y2 - proposals_y1
+    ex_ctr_x = proposals_x1 + 0.5 * ex_widths
+    ex_ctr_y = proposals_y1 + 0.5 * ex_heights
+
+    gt_widths = reference_boxes_x2 - reference_boxes_x1
+    gt_heights = reference_boxes_y2 - reference_boxes_y1
+    gt_ctr_x = reference_boxes_x1 + 0.5 * gt_widths
+    gt_ctr_y = reference_boxes_y1 + 0.5 * gt_heights
+
+    targets_dx = wx * (gt_ctr_x - ex_ctr_x) / ex_widths
+    targets_dy = wy * (gt_ctr_y - ex_ctr_y) / ex_heights
+    targets_dw = ww * torch.log(gt_widths / ex_widths)
+    targets_dh = wh * torch.log(gt_heights / ex_heights)
+
+    targets = torch.cat((targets_dx[:, :, None], targets_dy[:, :, None], targets_dw[:, :, None], targets_dh[:, :, None]), dim=2)
+    return targets
+
+
 class BoxCoder(object):
     """
     This class encodes and decodes a set of bounding boxes into
@@ -133,6 +197,7 @@ class BoxCoder(object):
             bbox_xform_clip (float)
         """
         self.weights = weights
+        self.weights_as_tensor = None
         self.bbox_xform_clip = bbox_xform_clip
 
     def encode(self, reference_boxes, proposals):
@@ -156,6 +221,25 @@ class BoxCoder(object):
         device = reference_boxes.device
         weights = torch.as_tensor(self.weights, dtype=dtype, device=device)
         targets = encode_boxes(reference_boxes, proposals, weights)
+
+        return targets
+
+    # Similar to encode_single, just a wrapper for a batched input
+    def encode_batch(self, reference_boxes, proposals):
+        """
+        Encode a set of proposals with respect to some
+        reference boxes
+
+        Args:
+            reference_boxes (Tensor): reference boxes
+            proposals (Tensor): boxes to be encoded
+        """
+        dtype = reference_boxes.dtype
+        device = reference_boxes.device
+        if self.weights_as_tensor is None:
+            self.weights_as_tensor = torch.as_tensor(self.weights, dtype=dtype, device=device)
+        weights = self.weights_as_tensor
+        targets = encode_boxes_batch(reference_boxes, proposals, weights)
 
         return targets
 
@@ -340,6 +424,67 @@ class Matcher(object):
 
         pred_inds_to_update = gt_pred_pairs_of_highest_quality[1]
         matches[pred_inds_to_update] = all_matches[pred_inds_to_update]
+
+
+# Similar to Matcher(object), but enabled for batched input
+# See original method for additional comments
+class MatcherBatch(object):
+    BELOW_LOW_THRESHOLD = -1
+    BETWEEN_THRESHOLDS = -2
+
+    __annotations__ = {
+        'BELOW_LOW_THRESHOLD': int,
+        'BETWEEN_THRESHOLDS': int,
+    }
+
+    def __init__(self, high_threshold, low_threshold, allow_low_quality_matches=False):
+        # type: (float, float, bool) -> None
+
+        self.BELOW_LOW_THRESHOLD = -1
+        self.BETWEEN_THRESHOLDS = -2
+        assert low_threshold <= high_threshold
+        self.high_threshold = high_threshold
+        self.low_threshold = low_threshold
+        self.allow_low_quality_matches = allow_low_quality_matches
+
+    def __call__(self, match_quality_matrix):
+        # TODO: move to preprocessing
+        if match_quality_matrix.numel() == 0:
+            # empty targets or proposals not supported during training
+            if match_quality_matrix.shape[0] == 0:
+                raise ValueError(
+                    "No ground-truth boxes available for one of the images "
+                    "during training")
+            else:
+                raise ValueError(
+                    "No proposal boxes available for one of the images "
+                    "during training")
+
+        matched_vals, matches = match_quality_matrix.max(dim=1)
+        all_matches = matches.clone() if self.allow_low_quality_matches else None
+
+        below_low_threshold = matched_vals < self.low_threshold
+        between_thresholds = (matched_vals >= self.low_threshold) & (matched_vals < self.high_threshold)
+        matches = torch.where(below_low_threshold, self.BELOW_LOW_THRESHOLD, matches)
+        matches = torch.where(between_thresholds, self.BETWEEN_THRESHOLDS, matches)
+
+        if self.allow_low_quality_matches:
+            assert all_matches is not None
+            matches = self.set_low_quality_matches_(matches, all_matches, match_quality_matrix)
+
+        return matches
+
+    def set_low_quality_matches_(self, matches, all_matches, match_quality_matrix):
+        highest_quality_foreach_gt, _ = match_quality_matrix.max(dim=2)
+
+        gt_pred_pairs_of_highest_quality = \
+            torch.where((match_quality_matrix == highest_quality_foreach_gt[:, :, None]) &
+                        (match_quality_matrix != 0), 1, 0)
+
+        gt_pred_pairs_of_highest_quality = gt_pred_pairs_of_highest_quality.sum(dim=1)
+        matches = torch.where(gt_pred_pairs_of_highest_quality >= 1, all_matches, matches)
+
+        return matches
 
 
 class SSDMatcher(Matcher):

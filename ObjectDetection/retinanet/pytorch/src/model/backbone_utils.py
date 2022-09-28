@@ -1,7 +1,21 @@
+# Copyright (c) 2021-2022, NVIDIA CORPORATION. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#           http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import warnings
 from torch import nn
 
-from torchvision.ops import misc as misc_nn_ops
+from .frozen_bn import FrozenBatchNorm2d
 
 import model.resnet
 from model.utils import IntermediateLayerGetter
@@ -50,10 +64,11 @@ class BackboneWithFPN(nn.Module):
 def resnet_fpn_backbone(
     backbone_name,
     pretrained,
-    norm_layer=misc_nn_ops.FrozenBatchNorm2d,
+    norm_layer=FrozenBatchNorm2d,
     trainable_layers=3,
     returned_layers=None,
-    extra_blocks=None
+    extra_blocks=None,
+    **kwargs
 ):
     """
     Constructs a specified ResNet backbone with FPN on top. Freezes the specified number of layers in the backbone.
@@ -90,7 +105,7 @@ def resnet_fpn_backbone(
             a new list of feature maps and their corresponding names. By
             default a ``LastLevelMaxPool`` is used.
     """
-    backbone = model.resnet.__dict__[backbone_name](pretrained=pretrained, norm_layer=norm_layer)
+    backbone = model.resnet.__dict__[backbone_name](pretrained=pretrained, norm_layer=norm_layer, **kwargs)
 
     # select layers that wont be frozen
     assert 0 <= trainable_layers <= 5

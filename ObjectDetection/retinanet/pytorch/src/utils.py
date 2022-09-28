@@ -1,3 +1,17 @@
+# Copyright (c) 2021-2022, NVIDIA CORPORATION. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#           http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from collections import defaultdict, deque
 import datetime
 import errno
@@ -6,6 +20,15 @@ import time
 
 import torch
 import torch.distributed as dist
+
+
+class ScratchPad:
+    target_n = None
+    target_labels_padded = None
+    target_boxes_padded = None
+    target_matched_idxs = None
+    gt_classes_target = None
+    batch_size_vector = None
 
 
 class SmoothedValue(object):
@@ -26,15 +49,15 @@ class SmoothedValue(object):
         self.count += n
         self.total += value * n
 
-    def synchronize_between_processes(self):
+    def synchronize_between_processes(self, group=None):
         """
         Warning: does not synchronize the deque!
         """
         if not is_dist_avail_and_initialized():
             return
         t = torch.tensor([self.count, self.total], dtype=torch.float64, device='cuda')
-        dist.barrier()
-        dist.all_reduce(t)
+        dist.barrier(group=group)
+        dist.all_reduce(t, group=group)
         t = t.tolist()
         self.count = int(t[0])
         self.total = t[1]
@@ -70,7 +93,7 @@ class SmoothedValue(object):
             value=self.value)
 
 
-def all_gather(data):
+def all_gather(data, group):
     """
     Run all_gather on arbitrary picklable data (not necessarily tensors)
     Args:
@@ -78,15 +101,15 @@ def all_gather(data):
     Returns:
         list[data]: list of data gathered from each rank
     """
-    world_size = get_world_size()
+    world_size = group.size() if group else get_world_size()
     if world_size == 1:
         return [data]
     data_list = [None] * world_size
-    dist.all_gather_object(data_list, data)
+    dist.all_gather_object(object_list=data_list, obj=data, group=group)
     return data_list
 
 
-def broadcast(data, src):
+def broadcast(data, src, group):
     """
     Run broadcast on arbitrary picklable data (not necessarily tensors)
     Args:
@@ -95,15 +118,15 @@ def broadcast(data, src):
     Returns:
         list[data]: list of data gathered from each rank
     """
-    world_size = get_world_size()
+    world_size = group.size() if group else get_world_size()
     if world_size == 1:
         return data
     data_list = data if isinstance(data, list) else [data]
-    dist.broadcast_object_list(data_list, src=src)
+    dist.broadcast_object_list(object_list=data_list, src=src, group=group)
     return data_list if isinstance(data, list) else data_list[0]
 
 
-def reduce_dict(input_dict, average=True):
+def reduce_dict(input_dict, group, average=True):
     """
     Args:
         input_dict (dict): all the values will be reduced
@@ -112,7 +135,7 @@ def reduce_dict(input_dict, average=True):
     have the averaged results. Returns a dict with the same fields as
     input_dict, after reduction.
     """
-    world_size = get_world_size()
+    world_size = group.size() if group else get_world_size()
     if world_size < 2:
         return input_dict
     with torch.no_grad():
@@ -123,7 +146,7 @@ def reduce_dict(input_dict, average=True):
             names.append(k)
             values.append(input_dict[k])
         values = torch.stack(values, dim=0)
-        dist.all_reduce(values)
+        dist.all_reduce(tensor=values, group=group)
         if average:
             values /= world_size
         reduced_dict = {k: v for k, v in zip(names, values)}
@@ -134,6 +157,8 @@ class MetricLogger(object):
     def __init__(self, delimiter="\t"):
         self.meters = defaultdict(SmoothedValue)
         self.delimiter = delimiter
+        self.summary = defaultdict(lambda: None)
+        self.current_iter = 0
 
     def update(self, **kwargs):
         for k, v in kwargs.items():
@@ -158,18 +183,20 @@ class MetricLogger(object):
             )
         return self.delimiter.join(loss_str)
 
-    def synchronize_between_processes(self):
+    def synchronize_between_processes(self, group=None):
         for meter in self.meters.values():
-            meter.synchronize_between_processes()
+            meter.synchronize_between_processes(group=group)
 
     def add_meter(self, name, meter):
         self.meters[name] = meter
 
     def log_every(self, iterable, print_freq, header=None):
-        i = 0
+        self.current_iter = 0
+        self.summary['samples'] = 0
         if not header:
             header = ''
         start_time = time.time()
+        self.summary['start_time'] = start_time
         end = time.time()
         iter_time = SmoothedValue(fmt='{avg:.4f}')
         data_time = SmoothedValue(fmt='{avg:.4f}')
@@ -198,23 +225,27 @@ class MetricLogger(object):
             data_time.update(time.time() - end)
             yield obj
             iter_time.update(time.time() - end)
-            if i % print_freq == 0 or i == len(iterable) - 1:
-                eta_seconds = iter_time.global_avg * (len(iterable) - i)
+            if self.current_iter % print_freq == 0 or self.current_iter == len(iterable) - 1:
+                eta_seconds = iter_time.global_avg * (len(iterable) - self.current_iter)
                 eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
                 if torch.cuda.is_available():
                     print(log_msg.format(
-                        i, len(iterable), eta=eta_string,
+                        self.current_iter, len(iterable), eta=eta_string,
                         meters=str(self),
                         time=str(iter_time), data=str(data_time),
                         memory=torch.cuda.max_memory_allocated() / MB))
                 else:
                     print(log_msg.format(
-                        i, len(iterable), eta=eta_string,
+                        self.current_iter, len(iterable), eta=eta_string,
                         meters=str(self),
                         time=str(iter_time), data=str(data_time)))
-            i += 1
+            self.current_iter += 1
             end = time.time()
-        total_time = time.time() - start_time
+            self.summary['samples'] += len(obj[0])
+            self.summary['end_time'] = end
+
+        end_time = time.time()
+        total_time = end_time - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
         print('{} Total time: {} ({:.4f} s / it)'.format(
             header, total_time_str, total_time / len(iterable)))
@@ -288,10 +319,10 @@ def save_on_master(*args, **kwargs):
         torch.save(*args, **kwargs)
 
 
-def barrier():
+def barrier(group):
     if not is_dist_avail_and_initialized():
         return
-    torch.distributed.barrier()
+    torch.distributed.barrier(group)
 
 
 def init_distributed_mode(args):
@@ -312,8 +343,39 @@ def init_distributed_mode(args):
     torch.cuda.set_device(args.gpu)
     args.dist_backend = 'nccl'
     print(f'| distributed init (rank {args.rank}): {args.dist_url}')
+    if args.cuda_graphs:
+        os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "0"
     torch.distributed.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                          world_size=args.world_size, rank=args.rank)
     torch.distributed.barrier()
-    setup_for_distributed(args.rank == 0)
 
+    args.ranks = list(range(args.world_size))
+    if args.num_eval_ranks is None:
+        args.num_train_ranks = args.world_size
+        args.num_eval_ranks = args.world_size
+
+        args.train_ranks = args.ranks
+        args.eval_ranks = args.ranks
+        args.train_rank = args.rank
+        args.eval_rank = args.rank
+    else:
+        args.num_train_ranks = args.world_size - args.num_eval_ranks
+
+        args.train_ranks = args.ranks[:args.num_train_ranks]
+        args.eval_ranks = args.ranks[args.num_train_ranks:]
+        args.train_rank = args.rank
+        args.eval_rank = args.rank - args.num_train_ranks
+
+    assert 1<=args.num_train_ranks<=args.world_size, "Number of training ranks must be between 1 and world size"
+    assert 1<=args.num_eval_ranks<=args.world_size, "Number of validation ranks must be between 1 and world size"
+
+    # create training and validation comm groups
+    args.train_group = torch.distributed.new_group(ranks=args.train_ranks)
+    args.eval_group = torch.distributed.new_group(ranks=args.eval_ranks)
+
+    setup_for_distributed(args.train_rank==0 or args.eval_rank==0)
+
+    # init new comms
+    tmp_tensor = torch.ones([1], device='cuda')
+    torch.distributed.all_reduce(tmp_tensor, group=args.train_group)
+    torch.distributed.all_reduce(tmp_tensor, group=args.eval_group)

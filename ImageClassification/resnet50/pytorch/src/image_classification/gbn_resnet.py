@@ -2,7 +2,7 @@ import math
 import torch
 import torch.nn as nn
 import numpy as np
-from group_bn import BatchNorm2d_NHWC as gbn_persistent
+from apex.contrib.groupbn import BatchNorm2d_NHWC as gbn_persistent
 from mlperf_logger import configure_logger, log_start, log_end, log_event, set_seeds, get_rank, barrier
 from mlperf_logging.mllog import constants
 
@@ -84,7 +84,7 @@ class ResNetBuilder(object):
         return fc
     
     def groupbn(self, planes, fuse_relu=True, bn_group=1, torch_channels_last=True, name_beta=None, name_gamma=None):
-        bn = gbn_persistent(planes, fuse_relu=fuse_relu, bn_group=bn_group, torch_channels_last=torch_channels_last, local_rank=self.local_rank, get_logs=self.get_logs, name_beta=name_beta, name_gamma=name_gamma)
+        bn = gbn_persistent(planes, fuse_relu=fuse_relu, bn_group=bn_group, torch_channels_last=torch_channels_last)
         return bn
 
 # ResNetBuilder }}}

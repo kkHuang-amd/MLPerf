@@ -24,4 +24,5 @@ COPY requirements.txt .
 COPY apex-0.1-cp37-cp37m-linux_x86_64.whl .
 RUN pip install --no-cache --disable-pip-version-check -U -r requirements.txt
 RUN pip install --force-reinstall apex-0.1-cp37-cp37m-linux_x86_64.whl
+COPY distributed_fused_lamb.py /opt/conda/lib/python3.7/site-packages/apex/contrib/optimizers/distributed_fused_lamb.py
 RUN pip install --extra-index-url https://developer.download.nvidia.com/compute/redist --upgrade nvidia-dali-cuda110

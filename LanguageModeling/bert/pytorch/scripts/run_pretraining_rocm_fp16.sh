@@ -19,11 +19,13 @@ echo "killing all previous python processes"
 echo "Clear page cache"
 sync && sudo /sbin/sysctl vm.drop_caches=3
 
+NCCL_MAX_NCHANNELS=${NCCL_MAX_NCHANNELS:-8}
+
 export NCCL_MIN_NCHANNELS=4
 #workaround for MI250 nccl issue
-export NCCL_MAX_NCHANNELS=8
+export NCCL_MAX_NCHANNELS=${NCCL_MAX_NCHANNELS}
 
-if [[ "$#" -ne 1 ]]; then
+if [[ "$#" -lt 1 ]]; then
   echo "usage: $0 <num_gpus, please enter 1 or 2 or 4 or 8>"
   exit
 fi
@@ -33,7 +35,9 @@ DATA_DIR=${DATA_DIR:-"/datasets/mlperf_dataset/wiki_20200101"}
 echo $DATA_DIR
 
 num_gpus=${1}
-precision=${3:-"fp16"}
+dis_fused_lamb=${2:-0}
+enable_fmha=${3:-0}
+precision=${4:-"fp16"}
 resume_training=${8:-"false"}
 create_logfile=${9:-"true"}
 accumulate_gradients=${10:-"true"}
@@ -124,7 +128,10 @@ CMD+=" --max_samples_termination=18400000"
 CMD+=" --dense_seq_output --unpad --exchange_padding --fused_gelu_bias --fused_mha"
 #--fused_bias_fc --fused_bias_mha --fused_dropout_add
 #CMD+=" --unpad_fmha" 
-#CMD+=" --distributed_lamb --dwu-num-rs-pg=1 --dwu-num-ar-pg=1 --dwu-num-ag-pg=1 --dwu-num-blocks=1"
+if [[ $dis_fused_lamb -eq 1 ]] ; then
+  echo "enable distributed_lamb"
+  CMD+=" --distributed_lamb --dwu-num-rs-pg=1 --dwu-num-ar-pg=1 --dwu-num-ag-pg=1 --dwu-num-blocks=1"
+fi
 CMD+=" --eval_dir=${DATA_DIR}/eval_varlength"
 CMD+=" --eval_iter_start_samples=150000"
 CMD+=" --eval_iter_samples=150000"
@@ -135,10 +142,15 @@ CMD+=" --log_freq=1"
 
 CMD="python3 -m torch.distributed.launch --nproc_per_node=$num_gpus $CMD"
 #fi
+hostname=`hostname`
 
 if [ "$create_logfile" = "true" ] ; then
   export GBS=$(expr $train_batch_size_phase2 \* $num_gpus)
-  printf -v TAG "pyt_bert_pretraining_phase2_%s_gbs%d" "$precision" $GBS
+  if [[ $dis_fused_lamb -eq 0 ]] ; then
+      printf -v TAG "pyt_bert_pretraining_phase2_%s_gbs%d_$hostname" "$precision" $GBS
+  else
+      printf -v TAG "pyt_bert_pretraining_phase2_%s_gbs%d_dis-lamb_max-ch-${NCCL_MAX_NCHANNELS}_$hostname" "$precision" $GBS
+  fi
   DATESTAMP=`date +'%y%m%d%H%M%S'`
   LOGFILE=$RESULTS_DIR/$job_name.$TAG.$DATESTAMP.log
   printf "Logs written to %s\n" "$LOGFILE"

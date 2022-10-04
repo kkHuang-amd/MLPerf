@@ -16,5 +16,5 @@
 #SBATCH --nodes=4
 #SBATCH --partition=MI250-x4-IB
 #SBATCH --ntasks-per-node=1
-#SBATCH --time=3:59:00
+#SBATCH --time=00:59:00
 srun -N 4  $@

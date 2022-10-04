@@ -6,15 +6,15 @@ CURRENTDATE=`date +"%Y-%m-%d-%T"`
 
 # Mention the number of gpus
 gpus_per_node=8
-batch_size=102
-num_epochs=42
+batch_size=128
+num_epochs=37
 format="nhwc"
 OUTDIR="./"
-wd="0.0002"
-base_lr="10.5"
+wd="0.00005"
+base_lr="13.4"
 lr_sched="polynomial"
 warmup=2
-data_dir=${DATASET_PATH:-"/global/scratch/mlperf_datasets/imagenet/"}
+data_dir=${DATASET_PATH:-"/datasets/imagenet/"}
 nnodes=${SLURM_NTASKS:-1}
 nodeid=${SLURM_NODEID:-0}
 gbs=$((batch_size*gpus_per_node*nnodes))

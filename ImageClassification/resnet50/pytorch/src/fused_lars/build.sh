@@ -1,6 +1,6 @@
 #!/bin/bash
 
-export MAX_JOBS=64
+export MAX_JOBS=128
 python3 -m pip uninstall -y fused_lars
 python3 -m pip uninstall -y fused_lars
 rm -rf build/

@@ -9,6 +9,7 @@ import os
 
 # ninja build does not work unless include_dirs are abs path
 this_dir = os.path.dirname(os.path.abspath(__file__))
+torch_dir = torch.__path__[0]
 
 def get_cuda_bare_metal_version(cuda_dir):
     raw_output = subprocess.check_output([cuda_dir + "/bin/nvcc", "-V"], universal_newlines=True)
@@ -89,7 +90,7 @@ if "--cpp_ext" in sys.argv or "--cuda_ext" in sys.argv:
 if "--cpp_ext" in sys.argv:
     sys.argv.remove("--cpp_ext")
     ext_modules.append(
-        CppExtension('fused_lars_C',
+        CppExtension('fused_lars_base_C',
                      ['csrc/flatten_unflatten.cpp',]))
 
 def get_cuda_bare_metal_version(cuda_dir):
@@ -158,11 +159,9 @@ if "--cuda_ext" in sys.argv:
                           include_dirs=[os.path.join(this_dir, 'csrc')],
                           extra_compile_args={'cxx': ['-O3'] + version_dependent_macros,
                                               'nvcc': nvcc_args_multi_tensor if not IS_ROCM_PYTORCH else hipcc_args_multi_tensor}))
-
 # Check, if ATen/CUDAGeneratorImpl.h is found, otherwise use ATen/cuda/CUDAGeneratorImpl.h
 # See https://github.com/pytorch/pytorch/pull/70650
 generator_flag = []
-torch_dir = torch.__path__[0]
 if os.path.exists(os.path.join(torch_dir, "include", "ATen", "cuda", "CUDAGeneratorImpl.h")):
     generator_flag = ["-DNEW_GENERATOR_PATH"]
 

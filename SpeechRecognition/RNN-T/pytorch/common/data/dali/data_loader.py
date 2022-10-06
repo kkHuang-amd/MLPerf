@@ -91,7 +91,7 @@ class DaliDataLoader:
             dont_use_mmap=dont_use_mmap,
             batch_size=self.batch_size,
             num_threads=num_threads,
-            device_id=gpu_id,
+            device_id=None, # Not use GPU
             seed=seed,
         )
         librispeech_pl.build()

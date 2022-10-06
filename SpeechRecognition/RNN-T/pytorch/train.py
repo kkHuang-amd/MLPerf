@@ -275,7 +275,7 @@ def train_step( model, loss_fn, args, batch_size, feats, feat_lens, txt, txt_len
 
     # sync free loss
     lr_cpu = torch.tensor(0, dtype=torch.float, device='cpu').pin_memory()
-    loss_cpu = torch.tensor(0, dtype=torch.float, device='cpu').pin_memory()
+    loss_cpu = torch.tensor(0, dtype=torch.float16, device='cpu').pin_memory()
     if args.batch_split_factor == 1:
         if rnnt_graph is not None:
             log_probs, log_prob_lens = rnnt_graph.step(feats, feat_lens, txt, txt_lens, meta_data[0])
@@ -698,7 +698,7 @@ def main():
         synthetic_seq_len = [args.synthetic_audio_seq_len, args.synthetic_text_seq_len]
     else:
         raise Exception("synthetic seq length for both text and audio need to be specified")
-    train_loader = DaliDataLoader(gpu_id=None,
+    train_loader = DaliDataLoader(gpu_id=args.local_rank,
                                   dataset_path=args.dataset_dir,
                                   shuffle=False, # sampler provides shuffled data
                                   config_data=train_dataset_kw,
@@ -707,7 +707,7 @@ def main():
                                   sampler=train_sampler,
                                   grad_accumulation_steps=args.grad_accumulation_steps,
                                   pipeline_type="train",
-                                  device_type="cpu",
+                                  device_type=args.dali_device,
                                   tokenizer=tokenizer,
                                   num_threads=args.data_cpu_threads,
                                   synthetic_seq_len=synthetic_seq_len,
@@ -721,7 +721,7 @@ def main():
                                   dont_use_mmap=args.dali_dont_use_mmap)
 
 
-    val_loader = DaliDataLoader(gpu_id=None,
+    val_loader = DaliDataLoader(gpu_id=args.local_rank,
                                 dataset_path=args.dataset_dir,
                                 shuffle=False,
                                 config_data=val_dataset_kw,
@@ -729,7 +729,7 @@ def main():
                                 batch_size=args.val_batch_size,
                                 sampler=eval_sampler,
                                 pipeline_type="val",
-                                device_type="cpu",
+                                device_type=args.dali_device,
                                 tokenizer=tokenizer,
                                 num_threads=args.data_cpu_threads,
                                 seed=dali_seed,
@@ -897,7 +897,6 @@ def main():
                     optimizer.set_global_scale(grad_scaler._get_scale_async())
                     grad_scaler.step(optimizer)
                     grad_scaler.update()
-
                 else:
                     optimizer.step()
 

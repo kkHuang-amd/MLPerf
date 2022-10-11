@@ -1,4 +1,6 @@
 import torch
+
+#from apex.optimizers.FusedSGD import Optimizer, required
 from torch.optim.optimizer import Optimizer, required
 
 from apex.multi_tensor_apply import multi_tensor_applier

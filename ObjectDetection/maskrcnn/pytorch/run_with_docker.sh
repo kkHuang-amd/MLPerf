@@ -77,8 +77,8 @@ log_event(key=constants.CACHE_CLEAR, value=True, stack_offset=0)"
         #enter interactive mode
         #docker exec -it "${_config_env[@]}" "${_cont_name}" bash 
         # Run experiment 
-        docker exec -it "${_config_env[@]}" "${_cont_name}" rocprof --stats -o /logs/output.csv ./run_and_time.sh
+        #docker exec -it "${_config_env[@]}" "${_cont_name}" rocprof --stats -o /logs/output_20221004.csv ./run_and_time.sh
         #docker exec -it "${_config_env[@]}" "${_cont_name}" /workspace1/cmd_docker.sh
-        #docker exec -it "${_config_env[@]}" "${_cont_name}" ./run_and_time.sh
+        docker exec -it "${_config_env[@]}" "${_cont_name}" ./run_and_time.sh
     ) |& tee "${_logfile_base}_${_experiment_index}.log"
 done

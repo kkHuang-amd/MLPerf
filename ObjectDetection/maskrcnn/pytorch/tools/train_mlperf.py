@@ -37,9 +37,16 @@ from maskrcnn_benchmark.utils.mlperf_logger import log_end, log_start, log_event
 from maskrcnn_benchmark.utils.async_evaluator import init, get_evaluator, set_epoch_tag, get_tag
 from maskrcnn_benchmark.utils.timed_section import TimedSection
 
+# RPD Tracer
+from rocmProfileData.rpd_tracer.rpdTracerControl import rpdTracerControl
+
 from fp16_optimizer import FP16_Optimizer
 
 from mlperf_logging.mllog import constants
+
+# RPD Tracer
+prof =  torch.autograd.profiler.emit_nvtx()
+
 # See if we can use apex.DistributedDataParallel instead of the torch default,
 # and enable mixed-precision via apex.amp
 try:
@@ -257,6 +264,14 @@ def train(cfg, local_rank, distributed, random_number_generator=None, seed=None)
     log_start(key=constants.RUN_START)
     barrier()
 
+    # pytorch profiler
+    rpd = rpdTracerControl()
+
+    prof.__enter__()
+
+    print("start recording...")
+    rpd.start()
+
     data_loader, iters_per_epoch = make_data_loader(
         cfg,
         is_train=True,
@@ -267,6 +282,9 @@ def train(cfg, local_rank, distributed, random_number_generator=None, seed=None)
         shapes=shapes
     )
     log_event(key=constants.TRAIN_SAMPLES, value=len(data_loader))
+
+    rpd.stop()
+    prof.__exit__(None, None, None)
 
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
 
@@ -312,7 +330,6 @@ def train(cfg, local_rank, distributed, random_number_generator=None, seed=None)
 
 
 def main():
-
     configure_logger(constants.MASKRCNN)
     log_start(key=constants.INIT_START)
 
@@ -337,6 +354,10 @@ def main():
 
     num_gpus = int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
     args.distributed = num_gpus > 1
+
+    # RPD Tracer
+    rpdTracerControl.setFilename(name="/logs/TraceRPD_test_" + str(args.local_rank) + ".rpd")  # in main
+    rpdTracerControl() # in main
 
     # if is_main_process:
     #     # Setting logging file parameters for compliance logging

@@ -64,3 +64,13 @@ RUN python3 setup.py develop
 #RUN pip install numpy==1.17.4
 ENV OMP_NUM_THREADS=1
 ENV OPENCV_FOR_THREADS_NUM=1
+
+# RPD Tracer
+RUN apt update -y \
+  && apt-get install sqlite3 libsqlite3-dev -y \
+  && apt install libsqlite3-dev -y \
+  && apt-get install libfmt-dev -y \
+  && cd rocmProfileData \
+  && make \
+  && make install \
+  && mv helpful_queries ../

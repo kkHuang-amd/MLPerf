@@ -44,7 +44,7 @@ accumulate_gradients=${10:-"true"}
 seed=${12:-$RANDOM}
 job_name=${13:-"bert_lamb_pretraining"}
 train_batch_size_phase2=${17:-56} ##Decrease BS to 27 to run on MI100
-learning_rate_phase2=${18:-"3.5e-4"}
+learning_rate_phase2=${18:-"3.25e-4"}
 warmup_proportion_phase2=${19:-"0.0"}
 train_steps_phase2=${20:-15000} 
 allreduce_post_accumulation=${14:-"true"}
@@ -147,9 +147,9 @@ hostname=`hostname`
 if [ "$create_logfile" = "true" ] ; then
   export GBS=$(expr $train_batch_size_phase2 \* $num_gpus)
   if [[ $dis_fused_lamb -eq 0 ]] ; then
-      printf -v TAG "pyt_bert_pretraining_phase2_%s_gbs%d_$hostname" "$precision" $GBS
+      printf -v TAG "pyt_bert_pretraining_phase2_%s_gbs%d_lr-${learning_rate_phase2}_$hostname" "$precision" $GBS
   else
-      printf -v TAG "pyt_bert_pretraining_phase2_%s_gbs%d_dis-lamb_max-ch-${NCCL_MAX_NCHANNELS}_$hostname" "$precision" $GBS
+      printf -v TAG "pyt_bert_pretraining_phase2_%s_gbs%d_dis-lamb_lr-${learning_rate_phase2}_max-ch-${NCCL_MAX_NCHANNELS}_$hostname" "$precision" $GBS
   fi
   DATESTAMP=`date +'%y%m%d%H%M%S'`
   LOGFILE=$RESULTS_DIR/$job_name.$TAG.$DATESTAMP.log

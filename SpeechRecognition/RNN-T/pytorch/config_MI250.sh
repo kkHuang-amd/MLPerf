@@ -20,8 +20,9 @@ export DATA_CPU_THREADS=16
 WALLTIME_MINUTES=120
 export WALLTIME=${WALLTIME:-$(( ${NEXP:-1} * ${WALLTIME_MINUTES} ))}
 
-source $(dirname ${BASH_SOURCE[0]})/hyperparameters_512.sh
+# source $(dirname ${BASH_SOURCE[0]})/hyperparameters_512.sh
 # source $(dirname ${BASH_SOURCE[0]})/hyperparameters_1536.sh
+source $(dirname ${BASH_SOURCE[0]})/hyperparameters_1536.sh
 # source $(dirname ${BASH_SOURCE[0]})/hyperparameters_2048.sh
 
 ## Opt flag

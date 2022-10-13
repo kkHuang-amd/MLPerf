@@ -53,7 +53,7 @@ set -e
                       /metadata/librispeech-train-clean-360-wav-tokenized.pkl \
                       /metadata/librispeech-train-other-500-wav-tokenized.pkl"}
 : ${VAL_MANIFESTS:="/metadata/librispeech-dev-clean-wav-tokenized.pkl"}
-: ${OUTPUT_DIR:="/results"}
+: ${OUTPUT_DIR:="/workspace/rnnt/results"}
 : ${TARGET:=0.058}
 
 # start timing

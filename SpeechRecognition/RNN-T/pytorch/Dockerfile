@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ARG FROM_IMAGE_NAME=rocm/pytorch:rocm5.2.3_ubuntu20.04_py3.7_pytorch_1.12.1
+ARG FROM_IMAGE_NAME=rocm/pytorch:rocm5.3_ubuntu20.04_py3.7_pytorch_1.12.1
 FROM ${FROM_IMAGE_NAME}
 
 RUN pip install --upgrade pip
@@ -21,7 +21,6 @@ RUN apt install -y sox
 WORKDIR /workspace/rnnt
 
 COPY requirements.txt .
-COPY apex-0.1-cp37-cp37m-linux_x86_64.whl .
 RUN pip install --no-cache --disable-pip-version-check -U -r requirements.txt
-RUN pip install --force-reinstall apex-0.1-cp37-cp37m-linux_x86_64.whl
 RUN pip install --extra-index-url https://developer.download.nvidia.com/compute/redist --upgrade nvidia-dali-cuda110
+COPY distributed_fused_lamb.py /opt/conda/lib/python3.7/site-packages/apex/contrib/optimizers/distributed_fused_lamb.py

@@ -57,6 +57,7 @@ fi
 "${CMD[@]}" tools/train_mlperf.py \
   ${EXTRA_PARAMS} \
   --config-file 'configs/e2e_mask_rcnn_R_50_FPN_1x.yaml' \
+  --ptprofiling ${PTPROFILING} \
   DTYPE 'float16' \
   PATHS_CATALOG 'maskrcnn_benchmark/config/paths_catalog_dbcluster.py' \
   MODEL.WEIGHT '/coco/models/R-50.pkl' \

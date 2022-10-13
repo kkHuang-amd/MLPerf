@@ -44,8 +44,9 @@ from fp16_optimizer import FP16_Optimizer
 
 from mlperf_logging.mllog import constants
 
+
 # RPD Tracer
-prof =  torch.autograd.profiler.emit_nvtx()
+ptprof = None
 
 # See if we can use apex.DistributedDataParallel instead of the torch default,
 # and enable mixed-precision via apex.amp
@@ -264,13 +265,17 @@ def train(cfg, local_rank, distributed, random_number_generator=None, seed=None)
     log_start(key=constants.RUN_START)
     barrier()
 
-    # pytorch profiler
-    rpd = rpdTracerControl()
+    # RPD tracer
+    global ptprof
 
-    prof.__enter__()
+    if ptprof != None:
+        rpd = rpdTracerControl()
+        ptprof.__enter__()
+        print("PyTorch profiler +")
 
-    print("start recording...")
-    rpd.start()
+    if ptprof != None:
+        print("Start RPD tracing...")
+        rpd.start()
 
     data_loader, iters_per_epoch = make_data_loader(
         cfg,
@@ -282,9 +287,6 @@ def train(cfg, local_rank, distributed, random_number_generator=None, seed=None)
         shapes=shapes
     )
     log_event(key=constants.TRAIN_SAMPLES, value=len(data_loader))
-
-    rpd.stop()
-    prof.__exit__(None, None, None)
 
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
 
@@ -325,6 +327,15 @@ def train(cfg, local_rank, distributed, random_number_generator=None, seed=None)
             "&&&& MLPERF METRIC THROUGHPUT={:.4f} iterations / s".format((arguments["iteration"] * cfg.SOLVER.IMS_PER_BATCH) / total_training_time)
     )
 
+    # RPD tracer
+    if ptprof != None:
+        print("Stop RPD tracing...")
+        rpd.stop()
+
+    if ptprof != None:
+        ptprof.__exit__(None, None, None)
+        print("PyTorch profiler -")
+
     return model, success
 
 
@@ -342,6 +353,7 @@ def main():
         type=str,
     )
     parser.add_argument("--local_rank", type=int, default=os.getenv('LOCAL_RANK', 0))
+    parser.add_argument("--ptprofiling", type=int, default=os.getenv('MASKRCNN_PROFILING_TORCH', 0))
     parser.add_argument(
         "opts",
         help="Modify config options using the command-line",
@@ -349,15 +361,18 @@ def main():
         nargs=argparse.REMAINDER,
     )
 
-
     args = parser.parse_args()
 
     num_gpus = int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
     args.distributed = num_gpus > 1
 
     # RPD Tracer
-    rpdTracerControl.setFilename(name="/logs/TraceRPD_test_" + str(args.local_rank) + ".rpd")  # in main
-    rpdTracerControl() # in main
+    global ptprof
+    if args.ptprofiling != 0:
+        ptprof = torch.autograd.profiler.emit_nvtx()
+        if ptprof != None:
+            rpdTracerControl.setFilename(name="/logs/TraceRPD_test_" + str(args.local_rank) + ".rpd")
+            rpdTracerControl()
 
     # if is_main_process:
     #     # Setting logging file parameters for compliance logging

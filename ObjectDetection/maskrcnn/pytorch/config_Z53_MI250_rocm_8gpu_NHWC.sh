@@ -23,3 +23,6 @@ export DGXHT=1         # HT is on is 2, HT off is 1
 export MIOPEN_FIND_MODE=5
 export MIOPEN_GEMM_ENFORCE_BACKEND=1
 export MIOPEN_DEBUG_CONV_DIRECT=0
+
+## Profiling
+export PTPROFILING=1

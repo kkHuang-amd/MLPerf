@@ -21,6 +21,8 @@ gbs=$((batch_size*gpus_per_node*nnodes))
 tag=gbs${gbs}_${nnodes}x${gpus_per_node}GPUs_epoch${num_epochs}_${format}_lr${base_lr}_warmup${warmup}_lr-sched-${lr_sched}_node${nodeid}
 submission_platform="MI200system"
 
+MASTER_ADDR=${1:-`echo $SLURM_NODELIST | sed -e 's/\[\([0-9]\).*\]/\1/g' | sed -e 's/,.*//g'`}
+
 CMD="--amp --dynamic-loss-scale --lr-schedule ${lr_sched} --num-gpus $gpus_per_node \
   --mom 0.9 --wd ${wd} --lr ${base_lr} --warmup ${warmup} --epochs ${num_epochs} --use-lars -b $batch_size \
   --eval-offset 2 --get-logs --submission-platform $submission_platform \
@@ -36,10 +38,15 @@ nnuma_nodes=$((nnuma_nodes < gpus_per_node ? nnuma_nodes : gpus_per_node))
 nsockets=`lscpu | grep "Socket(s)" | sed -e "s/.*:\s*//g"`
 ncores_per_socket=`lscpu | grep "Core(s) per socket:" | sed -e "s/.*:\s*//g"`
 
-CMD="python3 -u -m mlperf_utils.bind_launch --no_membind --nnuma_nodes $nnuma_nodes --nsockets_per_node ${nsockets} --ncores_per_socket ${ncores_per_socket} --node_rank ${nodeid} --nnodes ${nnodes} --master_port 23456 --nproc_per_node ${gpus_per_node} ./src/main.py --num-nodes ${nnodes} ${CMD}"
+if [[ ${MASTER_ADDR} == "" ]]; then
+    CMD="python3 -u -m mlperf_utils.bind_launch --no_membind --nnuma_nodes $nnuma_nodes --nsockets_per_node ${nsockets} --ncores_per_socket ${ncores_per_socket} --node_rank ${nodeid} --nnodes ${nnodes} --master_port 23456 --nproc_per_node ${gpus_per_node} ./src/main.py --num-nodes ${nnodes} ${CMD}"
+else
+    CMD="python3 -u -m mlperf_utils.bind_launch --no_membind --nnuma_nodes $nnuma_nodes --nsockets_per_node ${nsockets} --ncores_per_socket ${ncores_per_socket} --node_rank ${nodeid} --nnodes ${nnodes} --master_addr ${MASTER_ADDR} --master_port 23456 --nproc_per_node ${gpus_per_node} ./src/main.py --num-nodes ${nnodes} ${CMD}"
+fi
 
 LOG=${OUTDIR}/r_torchDistMP_${tag}.${CURRENTDATE}.log
 
+env 2>&1 | tee -a ${LOG}
 echo ${CMD} | tee -a ${LOG}
 SECONDS=0
 

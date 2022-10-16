@@ -42,6 +42,7 @@ CMD="python3 -u -m mlperf_utils.bind_launch --nnuma_nodes $nnuma_nodes --nsocket
 
 LOG=${OUTDIR}/r_torchDistMP_${tag}.${CURRENTDATE}.log
 
+env 2>&1 | tee -a ${LOG}
 echo ${CMD} | tee -a ${LOG}
 SECONDS=0
 

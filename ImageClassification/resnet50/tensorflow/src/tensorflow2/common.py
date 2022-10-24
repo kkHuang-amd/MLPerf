@@ -654,9 +654,6 @@ def get_num_train_iterations(flags_obj):
   else:
     eval_offset_epochs = flags_obj.eval_offset_epochs
     epochs_between_evals = flags_obj.epochs_between_evals
-    train_epochs = eval_offset_epochs + math.ceil(
-        (train_epochs - eval_offset_epochs) /
-        epochs_between_evals) * epochs_between_evals
 
   return steps_per_epoch, train_epochs
 

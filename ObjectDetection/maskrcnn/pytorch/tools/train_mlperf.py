@@ -47,6 +47,8 @@ from mlperf_logging.mllog import constants
 
 # RPD Tracer
 ptprof = None
+rpd = None
+prof_once = 2
 
 # See if we can use apex.DistributedDataParallel instead of the torch default,
 # and enable mixed-precision via apex.amp
@@ -108,6 +110,9 @@ def check_completed_tags(iteration):
 
 def mlperf_test_early_exit(iteration, iters_per_epoch, tester, model, distributed, min_bbox_map, min_segm_map):
     # Note: let iters / epoch == 10k, at iter 9999 we've finished epoch 0 and need to test
+    global ptprof
+    global prof_once
+    global rpd
     if iteration > 0 and (iteration + 1)% iters_per_epoch == 0:
         synchronize()
         epoch = iteration // iters_per_epoch + 1
@@ -122,6 +127,15 @@ def mlperf_test_early_exit(iteration, iters_per_epoch, tester, model, distribute
         tester(model=model, distributed=distributed)
         # necessary for correctness
         model.train()
+
+        ## print("debug RPD: " + str(iteration) + " " + str(prof_once) + " " + ptprof)
+        if prof_once > 0 and ptprof != None:
+            print("Stop RPD tracing...")
+            prof_once = prof_once - 1
+            rpd.stop()
+            ptprof.__exit__(None, None, None)
+            print("PyTorch profiler -")
+            ptprof.export_chrome_trace("/logs/autograd_trace.json")
     elif iteration % 10 == 9: # do finished check after every 10 iterations
         # Otherwise, check for finished async results
         results = check_completed_tags(iteration)
@@ -141,6 +155,15 @@ def mlperf_test_early_exit(iteration, iters_per_epoch, tester, model, distribute
                     logger.info("Target mAP reached, exiting...")
                     finished = 1
                     #return True
+
+        ## print("debug RPD: " + str(iteration) + " " + str(prof_once) + " " + ptprof)
+        if iteration == 1899 and prof_once > 0 and ptprof != None:
+            rpd = rpdTracerControl()
+            ptprof.__enter__()
+            print("PyTorch profiler +")
+            print("Start RPD tracing...")
+            prof_once = prof_once - 1
+            rpd.start()
 
         # We now know on rank 0 whether or not we should terminate
         # Bcast this flag on multi-GPU
@@ -267,15 +290,16 @@ def train(cfg, local_rank, distributed, random_number_generator=None, seed=None)
 
     # RPD tracer
     global ptprof
+    global rpd
 
-    if ptprof != None:
-        rpd = rpdTracerControl()
-        ptprof.__enter__()
-        print("PyTorch profiler +")
+#    if ptprof != None:
+#        rpd = rpdTracerControl()
+#        ptprof.__enter__()
+#        print("PyTorch profiler +")
 
-    if ptprof != None:
-        print("Start RPD tracing...")
-        rpd.start()
+#    if ptprof != None:
+#        print("Start RPD tracing...")
+#        rpd.start()
 
     data_loader, iters_per_epoch = make_data_loader(
         cfg,
@@ -328,13 +352,14 @@ def train(cfg, local_rank, distributed, random_number_generator=None, seed=None)
     )
 
     # RPD tracer
-    if ptprof != None:
-        print("Stop RPD tracing...")
-        rpd.stop()
+#    if ptprof != None:
+#        print("Stop RPD tracing...")
+#        rpd.stop()
 
-    if ptprof != None:
-        ptprof.__exit__(None, None, None)
-        print("PyTorch profiler -")
+#    if ptprof != None:
+#        ptprof.__exit__(None, None, None)
+#        print("PyTorch profiler -")
+#        ptprof.export_chrome_trace("/logs/autograd_trace.json")
 
     return model, success
 
@@ -368,7 +393,7 @@ def main():
 
     # RPD Tracer
     global ptprof
-    if args.ptprofiling != 0:
+    if args.ptprofiling != 0 and args.local_rank == 0:
         ptprof = torch.autograd.profiler.emit_nvtx()
         if ptprof != None:
             rpdTracerControl.setFilename(name="/logs/TraceRPD_test_" + str(args.local_rank) + ".rpd")

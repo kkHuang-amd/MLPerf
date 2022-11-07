@@ -39,10 +39,6 @@ RUN pip install pybind11 Cython
 RUN pip install matplotlib==3.5.3
 RUN git clone https://github.com/NVIDIA/cocoapi \
  && cd cocoapi/PythonAPI \
-# && conda install -y -c anaconda python=3.8 \
-# && conda install -y -c anaconda cython \
-# && conda install -y -c anaconda pytorch \
-# && conda install -y -c anaconda cudatoolkit \
  && python3 setup.py build_ext install
 
 #install torchvision: only required for 3.9rc2
@@ -73,9 +69,9 @@ ENV OPENCV_FOR_THREADS_NUM=1
 
 # RPD Tracer
 RUN apt update -y \
-  && apt-get install sqlite3 libsqlite3-dev -y \
+  && apt install sqlite3 libsqlite3-dev -y \
   && apt install libsqlite3-dev -y \
-  && apt-get install libfmt-dev -y \
+  && apt install libfmt-dev -y \
   && cd rocmProfileData \
   && make \
   && make install \

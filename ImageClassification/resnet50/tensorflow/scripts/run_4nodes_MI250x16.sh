@@ -8,11 +8,10 @@ sync && /sbin/sysctl vm.drop_caches=3
 if [[ ${SLURM_NTASKS} != "" ]]; then
     source ./scripts/set_tf_config.sh
 fi
-export OMP_NUM_THREADS=32
+export OMP_NUM_THREADS=128
 export OMP_PLACES=cores
 export OMP_PROC_BIND=master
-export DATASETS_NUM_PRIVATE_THREADS=32
-export TF_FORCE_GPU_ALLOW_GROWTH=true
+export DATASETS_NUM_PRIVATE_THREADS=128
 export TF_ROCM_FUSION_ENABLE=1
 
 #bash ~/cp_imagenet_to_ram_tf.sh
@@ -23,19 +22,19 @@ NUM_GPUS_PER_NODE=8
 NUM_GPUS=$((NUM_GPUS_PER_NODE * NNODES))
 
 # HYPER-PARAMETERS
-BASE_LEARNING_RATE=10.5
-BATCH_SIZE_PER_DEVICE=102
+BASE_LEARNING_RATE=${2:-10.5}
+BATCH_SIZE_PER_DEVICE=${1:-102}
 BATCH_SIZE=$((BATCH_SIZE_PER_DEVICE * NUM_GPUS))
 ACCUMULATION_STEPS=1
-TRAIN_EPOCHS=42
+TRAIN_EPOCHS=${3:-42}
 OPTIMIZER="LARS"
 LABEL_SMOOTHING="0.1"
 LARS_EPSILON=0
 LOG_STEPS=125
 LR_SCHEDULE="polynomial"
 MOMENTUM="0.9"
-WARMUP_EPOCHS=2
-WEIGHT_DECAY=0.0002
+WARMUP_EPOCHS=${5:-2}
+WEIGHT_DECAY=${4:-0.0002}
 DATA_TYPE="fp16"
 EVAL_OFFSET=3
 EVAL_PERIOD=4
@@ -46,7 +45,6 @@ EXP_ID=${EXP_ID:-"$(date +%y%m%d_%H%M%S)"}
 OUT_DIR=${OUT_DIR:-"out/${SYSTEM_NAME}"}
 MODEL_DIR=${MODEL_DIR:-"${OUT_DIR}/${EXP_ID}/"}
 IMAGENET_HOME=${DATASET_PATH:-"/datasets/imagenet/tf_record/"}
-#IMAGENET_HOME=${DATASET_PATH:-"/global/scratch/mlperf_datasets/imagenet/tf_record/"}
 
 
 # VARIOUS
@@ -64,7 +62,7 @@ else
 fi
 
 gbs=$((BATCH_SIZE_PER_DEVICE*NUM_GPUS))
-tag=gbs${gbs}_${NUM_GPUS}GPUs_epoch${TRAIN_EPOCHS}_lr${BASE_LEARNING_RATE}_lr-sched-${LR_SCHEDULE}_node${SLURM_NODEID}
+tag=gbs${gbs}_${NUM_GPUS}GPUs_epoch${TRAIN_EPOCHS}_lr${BASE_LEARNING_RATE}_wd${WEIGHT_DECAY}_lr-sched-${LR_SCHEDULE}_node${SLURM_NODEID}
 CURRENTDATE=`date +"%Y-%m-%d-%T"`
 LOG=r_tf_${tag}_${CURRENTDATE}.log
 
@@ -83,9 +81,10 @@ steps_per_loop=$((1281167 / $gbs + 1))
   # --model_dir=${MODEL_DIR} \
   # --num_accumulation_steps=${ACCUMULATION_STEPS} \
   # --data_format="channels_last" \
-export MIOPEN_USER_DB_PATH=${HOME}/miopen-db-luise_node${SLURM_NODEID}_${CURRENTDATE}
+export MIOPEN_USER_DB_PATH=/tmp/miopen-db-luise_node${SLURM_NODEID}_${CURRENTDATE}
 rm -rf ${MIOPEN_USER_DB_PATH}
 python3 ./src/tensorflow2/resnet_ctl_imagenet_main.py \
+  --data_format="channels_first" \
   --data_dir=${IMAGENET_HOME} \
   --distribution_strategy ${DISTRIBUTION_STRATEGY} \
   --num_gpus=${NUM_GPUS} \
@@ -119,7 +118,7 @@ python3 ./src/tensorflow2/resnet_ctl_imagenet_main.py \
   --noreport_accuracy_metrics \
   --single_l2_loss_op \
   --noskip_eval \
-  --steps_per_loop=1252 \
+  --steps_per_loop=3600 \
   --enable_eager \
   --noenable_xla \
   --enable_device_warmup \

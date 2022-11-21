@@ -642,6 +642,7 @@ class BertEncoder(nn.Module):
         self.pad = config.pad
         self.fuse_mask = config.fuse_mask
         self.enable_stream = config.enable_stream
+        self.mask_cache = None
 
     def forward(self, hidden_states, attention_mask, output_all_encoded_layers=True, checkpoint_activations=False):
 
@@ -654,7 +655,10 @@ class BertEncoder(nn.Module):
             batch = hidden_states.shape[0]
             maxseqlen = hidden_states.shape[1]
             hidden_size = hidden_states.shape[2]
-            attention_indices, attention_mask, seqlen, ntokens, cu_seqlens, actual_seqlens, maxseqlen_in_batch = generate_mask(attention_mask, self.num_attention_heads, pad=self.pad, fuse_mask=self.fuse_mask, unpad_fmha=self.unpad_fmha)
+            attention_indices, attention_mask, seqlen, ntokens, cu_seqlens, actual_seqlens, maxseqlen_in_batch = generate_mask(attention_mask, self.num_attention_heads, pad=self.pad, fuse_mask=self.fuse_mask, unpad_fmha=self.unpad_fmha, mask=self.mask_cache)
+            
+            self.mask_cache = attention_mask
+
             if self.pad == True and self.enable_stream == False:
                 hidden_states = hidden_states.view(batch,maxseqlen,hidden_size).permute(1,0,2).contiguous().view(batch*maxseqlen,hidden_size).contiguous()
             if self.pad == True and self.enable_stream == True:

@@ -27,7 +27,7 @@ def unpad_mask(out_, in_, indices):
 
 #######################################################################################################################################################################
 
-def generate_mask(attention_mask, heads, pad=False, fuse_mask=True, unpad_fmha=False):
+def generate_mask(attention_mask, heads, pad=False, fuse_mask=True, unpad_fmha=False, mask=None):
     if unpad_fmha:
         seqlen = attention_mask.sum(dim=1).to(dtype=torch.int32).flatten()
         indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
@@ -64,7 +64,8 @@ def generate_mask(attention_mask, heads, pad=False, fuse_mask=True, unpad_fmha=F
     elif pad==False and fuse_mask == False:
         padded_mask = (padded_mask.unsqueeze(1) * padded_mask.unsqueeze(2)).unsqueeze(1).half().repeat(1, heads, 1, 1)
         indices_mask = torch.nonzero(padded_mask.flatten(), as_tuple=False).flatten()            
-        mask = torch.zeros([len(indices_mask)], device="cuda", dtype=torch.float16)            
+        if mask == None or len(mask) != len(indices_mask):
+            mask = torch.zeros([len(indices_mask)], device="cuda", dtype=torch.float16)            
         unpad_mask(mask, padded_mask, indices_mask)            
         mask = (1 - mask) * -10000.0
     elif pad==True and fuse_mask == True:

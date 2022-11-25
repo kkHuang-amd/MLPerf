@@ -642,7 +642,6 @@ def main():
         optimizer.zero_grad()   # Don't really want to do the update
         if args.dist_lamb:
             optimizer.complete_reductions()
-            print(grad_scaler._get_scale_async())
             optimizer.set_global_scale(grad_scaler._get_scale_async())
             grad_scaler.step(optimizer)
             grad_scaler.update()
@@ -813,7 +812,6 @@ def main():
         optimizer.zero_grad()   # Don't really want to do the update
         if args.dist_lamb:
             optimizer.complete_reductions()
-            print(grad_scaler._get_scale_async())
             optimizer.set_global_scale(grad_scaler._get_scale_async())
             grad_scaler.step(optimizer)
             grad_scaler.update()
@@ -896,7 +894,6 @@ def main():
                 sbridge.start_prof(SBridge.OPT_TIME)
                 if args.dist_lamb:
                     optimizer.complete_reductions()
-                    print(grad_scaler._get_scale_async())
                     optimizer.set_global_scale(grad_scaler._get_scale_async())
                     grad_scaler.step(optimizer)
                     grad_scaler.update()

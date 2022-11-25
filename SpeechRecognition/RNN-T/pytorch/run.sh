@@ -1,5 +1,7 @@
 #!/bin/bash
 
+kill `ps aux | grep train.py | awk '{print $2}'`
+
 set -euxo pipefail
 
 : "${LOGDIR:=$(pwd)/results}"

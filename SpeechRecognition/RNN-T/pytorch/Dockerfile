@@ -16,7 +16,7 @@ ARG FROM_IMAGE_NAME=rocm/pytorch:rocm5.3_ubuntu20.04_py3.7_pytorch_1.12.1
 FROM ${FROM_IMAGE_NAME}
 
 RUN pip install --upgrade pip
-RUN apt install -y sox
+RUN apt install -y sox jq
 
 WORKDIR /workspace/rnnt
 

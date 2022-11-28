@@ -11,7 +11,7 @@ export DGXHT=2         # HT is on is 2, HT off is 1
 export DATADIR="/datasets/"
 export METADATA_DIR="/datasets/tokenized/"
 export SENTENCEPIECES_DIR="/datasets/sentencepieces"
-export BATCHSIZE=96
+export BATCHSIZE=192
 export EVAL_BATCHSIZE=128
 export GRAD_ACCUMULATION_STEPS=1
 
@@ -20,10 +20,7 @@ export DATA_CPU_THREADS=16
 WALLTIME_MINUTES=120
 export WALLTIME=${WALLTIME:-$(( ${NEXP:-1} * ${WALLTIME_MINUTES} ))}
 
-# source $(dirname ${BASH_SOURCE[0]})/hyperparameters_512.sh
-# source $(dirname ${BASH_SOURCE[0]})/hyperparameters_1536.sh
 source $(dirname ${BASH_SOURCE[0]})/hyperparameters_1536.sh
-# source $(dirname ${BASH_SOURCE[0]})/hyperparameters_2048.sh
 
 ## Opt flag
 export FUSE_RELU_DROPOUT=true
@@ -43,5 +40,6 @@ export VECTORIZED_SAMPLER=true
 export DIST_SAMPLER=true
 export MIN_SEQ_SPLIT_LEN=20
 export FC_IMPL=apex_mlp
+export BATCH_SPLIT_FACTOR=2
 export PRE_SORT_FOR_SEQ_SPLIT=true
-export LOG_FREQUENCY=1
+export LOG_FREQUENCY=1000

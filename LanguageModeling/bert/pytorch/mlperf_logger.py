@@ -3,6 +3,7 @@ import os
 import subprocess
 
 import torch
+import deepspeed
     
 from mlperf_logging import mllog
 from mlperf_logging.mllog import constants
@@ -43,7 +44,9 @@ def barrier():
     if torch.distributed.is_available() and torch.distributed.is_initialized():
         torch.distributed.all_reduce(torch.cuda.FloatTensor(1))
         torch.cuda.synchronize()
-
+    elif deepspeed.comm.is_initialized():
+        deepspeed.comm.all_reduce(torch.cuda.FloatTensor(1))
+        torch.cuda.synchronize()
 
 def get_rank():
     """
@@ -51,6 +54,8 @@ def get_rank():
     """
     if torch.distributed.is_available() and torch.distributed.is_initialized():
         rank = torch.distributed.get_rank()
+    elif deepspeed.comm.is_initialized():
+        rank = deepspeed.comm.get_rank()
     else:
         rank = 0
     return rank

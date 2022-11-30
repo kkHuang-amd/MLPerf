@@ -12,7 +12,8 @@
 # limitations under the License.
 
 import torch
-import torch.distributed as dist
+import deepspeed
+#import torch.distributed as dist
 
 from contextlib import contextmanager
 import logging.config
@@ -48,7 +49,7 @@ def generate_seeds(rng, size):
     return seeds
 
 
-def broadcast_seeds(seeds, device):
+def broadcast_seeds(seeds, device, enableDeepSpeed=False):
     """
     Broadcasts random seeds to all distributed workers.
     Returns list of random seeds (broadcasted from workers with rank 0).
@@ -56,14 +57,21 @@ def broadcast_seeds(seeds, device):
     :param seeds: list of seeds (integers)
     :param device: torch.device
     """
-    if torch.distributed.is_available() and torch.distributed.is_initialized():
+    dist_is_available = True
+    if enableDeepSpeed == False:
+        import torch.distributed as dist
+        dist_is_available = torch.distributed.is_available()
+    else:
+        import deepspeed.comm as dist
+
+    if dist_is_available and dist.is_initialized():
         seeds_tensor = torch.LongTensor(seeds).to(device)
-        torch.distributed.broadcast(seeds_tensor, 0)
+        dist.broadcast(seeds_tensor, 0)
         seeds = seeds_tensor.tolist()
     return seeds
 
 
-def setup_seeds(master_seed, epochs, device):
+def setup_seeds(master_seed, epochs, device, enableDeepSpeed=False):
     """
     Generates seeds from one master_seed.
     Function returns (worker_seeds, shuffling_seeds), worker_seeds are later
@@ -99,8 +107,8 @@ def setup_seeds(master_seed, epochs, device):
     shuffling_seeds = generate_seeds(seeding_rng, epochs)
 
     # broadcast seeds from rank=0 to other workers
-    worker_seeds = broadcast_seeds(worker_seeds, device)
-    shuffling_seeds = broadcast_seeds(shuffling_seeds, device)
+    worker_seeds = broadcast_seeds(worker_seeds, device, enableDeepSpeed)
+    shuffling_seeds = broadcast_seeds(shuffling_seeds, device, enableDeepSpeed)
     return worker_seeds, shuffling_seeds
 
 
@@ -113,6 +121,9 @@ def barrier():
     if torch.distributed.is_available() and torch.distributed.is_initialized():
         torch.distributed.all_reduce(torch.cuda.FloatTensor(1))
         torch.cuda.synchronize()
+    elif deepspeed.comm.is_initialized():
+        deepspeed.comm.all_reduce(torch.cuda.FloatTensor(1))
+        torch.cuda.synchronize()
 
 
 def get_rank():
@@ -121,6 +132,8 @@ def get_rank():
     """
     if torch.distributed.is_available() and torch.distributed.is_initialized():
         rank = torch.distributed.get_rank()
+    elif deepspeed.comm.is_initialized():
+        rank = deepspeed.comm.get_rank()
     else:
         rank = 0
     return rank
@@ -139,11 +152,15 @@ def get_world_size():
     
     if torch.distributed.is_initialized():
         print("Torch distributed is initialized.")
+    elif deepspeed.comm.is_initialized():
+        print("Deepspeed comm is initialized.")
     else:
         print("Torch distributed is not initialized.")
 
     if torch.distributed.is_available() and torch.distributed.is_initialized():
         world_size = torch.distributed.get_world_size()
+    elif deepspeed.comm.is_initialized():
+        world_size = deepspeed.comm.get_world_size()
     else:
         world_size = 1
     return world_size

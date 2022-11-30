@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import torch
+import deepspeed
 from function import graph
 from apex import amp
 import time
@@ -68,8 +69,12 @@ class FwdLossBwdTrainer():
 
     def capture_bert_model_segment_graph(self, bert_model, use_cuda_graph):
         # eval batch depends on the rank, since eval sample count isn't divisible by world size
-        rank = torch.distributed.get_rank()
-        world_size = torch.distributed.get_world_size()
+        if self.args.deepspeed == True:
+            import deepspeed.comm as dist
+        else:
+            import torch.distributed as dist
+        rank = dist.get_rank()
+        world_size = dist.get_world_size()
         eval_batch_min = self.args.num_eval_examples // world_size
         remainder = self.args.num_eval_examples % world_size
         if rank<remainder:
@@ -151,15 +156,19 @@ class FwdLossBwdTrainer():
 
         sbridge.stop_start_prof(SBridge.FWD_TIME, SBridge.BWD_TIME)
 
-        if self.args.bypass_amp:
-            loss.backward()
-        elif self.args.distributed_lamb:
-            optimizer._lazy_init_stage1()
-            self.grad_scaler.scale(loss).backward()
-            optimizer._lazy_init_stage2()
-        else:
-            with amp.scale_loss(loss, optimizer, delay_overflow_check=self.args.allreduce_post_accumulation) as scaled_loss:
-                scaled_loss.backward()
+        if torch.distributed.is_initialized():
+            if self.args.bypass_amp:
+                loss.backward()
+            elif self.args.distributed_lamb:
+                optimizer._lazy_init_stage1()
+                self.grad_scaler.scale(loss).backward()
+                optimizer._lazy_init_stage2()
+            else:
+                with amp.scale_loss(loss, optimizer, delay_overflow_check=self.args.allreduce_post_accumulation) as scaled_loss:
+                    scaled_loss.backward()
+        elif deepspeed.comm.is_initialized():
+            model.step()
+
         sbridge.stop_prof(SBridge.BWD_TIME)
 
         if self.send_stats_in_parallel:

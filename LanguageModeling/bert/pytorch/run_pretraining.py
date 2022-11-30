@@ -27,6 +27,7 @@ import os
 import glob
 import numpy as np
 import torch
+import deepspeed
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, Dataset
 from torch.utils.data.distributed import DistributedSampler
 import logging
@@ -45,7 +46,6 @@ from schedulers import LinearWarmupPolyDecayScheduler
 
 import utils
 
-import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, Dataset
 from torch.utils.data.distributed import DistributedSampler
@@ -87,10 +87,15 @@ class WorkerInitObj(object):
         random.seed(self.seed + id)
 
 def get_eval_batchsize_per_worker(args):
-    if torch.distributed.is_initialized():
-        chunk_size = args.num_eval_examples // torch.distributed.get_world_size()
-        rank = torch.distributed.get_rank()
-        remainder = args.num_eval_examples % torch.distributed.get_world_size()
+    if args.deepspeed:
+        import deepspeed.comm as dist
+    else:
+        import torch.distributed as dist
+
+    if dist.is_initialized():
+        chunk_size = args.num_eval_examples // dist.get_world_size()
+        rank = dist.get_rank()
+        remainder = args.num_eval_examples % dist.get_world_size()
         if rank<remainder:
             return (chunk_size+1)
         else:
@@ -111,6 +116,12 @@ def create_pretraining_dataset(input_file, max_pred_length, shared_list, args, w
 
 def create_eval_dataset(args, worker_init_fn):
     eval_data = []
+
+    if args.deepspeed:
+        import deepspeed.comm as dist
+    else:
+        import torch.distributed as dist
+
     for eval_file in sorted(os.listdir(args.eval_dir)):
         eval_file_path = os.path.join(args.eval_dir, eval_file)
         if os.path.isfile(eval_file_path) and 'part' in eval_file_path:
@@ -118,10 +129,10 @@ def create_eval_dataset(args, worker_init_fn):
             if len(eval_data) > args.num_eval_examples:
                 eval_data = eval_data[:args.num_eval_examples]
                 break
-    if torch.distributed.is_initialized():
-        chunk_size = args.num_eval_examples // torch.distributed.get_world_size()
-        rank = torch.distributed.get_rank()
-        remainder = args.num_eval_examples % torch.distributed.get_world_size()
+    if dist.is_initialized():
+        chunk_size = args.num_eval_examples // dist.get_world_size()
+        rank = dist.get_rank()
+        remainder = args.num_eval_examples % dist.get_world_size()
         if rank<remainder:
             eval_data = eval_data[(chunk_size+1)*rank : (chunk_size+1)*(rank+1)]
         else:
@@ -203,6 +214,7 @@ class synthetic_dataset(Dataset):
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
+    deepspeed.add_config_arguments(parser)
 
     ## Required parameters
     parser.add_argument("--input_dir",
@@ -578,6 +590,11 @@ def found_resume_checkpoint(args):
 def setup_training(args):
     assert (torch.cuda.is_available())
 
+    if args.deepspeed:
+        import deepspeed.comm as dist
+    else:
+        import torch.distributed as dist
+
     if args.local_rank == -1:
         assert False, "code path not tested with cuda graphs"
         device = torch.device("cuda")
@@ -587,8 +604,11 @@ def setup_training(args):
         device = torch.device("cuda", args.local_rank)
         # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
         os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "0"
-        torch.distributed.init_process_group(backend='nccl', init_method='env://')
-        args.n_gpu = torch.distributed.get_world_size()
+        if args.deepspeed:
+            deepspeed.init_distributed(dist_backend='nccl', init_method='env://')
+        else:
+            dist.init_process_group(backend='nccl', init_method='env://')
+        args.n_gpu = dist.get_world_size()
 
     args.device = device
     print("device: {} n_gpu: {}, distributed training: {}, 16-bits training: {}".format(
@@ -680,6 +700,11 @@ def prepare_model_and_optimizer(args, device, stream):
     args.resume_step = 0
     checkpoint = None
 
+    if args.deepspeed:
+        import deepspeed.comm as dist
+    else:
+        import torch.distributed as dist
+
     config = BertConfig.from_json_file(args.bert_config_path)
     config.fused_mha = args.fused_mha
     config.fused_gelu_bias = args.fused_gelu_bias
@@ -765,7 +790,7 @@ def prepare_model_and_optimizer(args, device, stream):
 
     mlperf_logger.log_event(key=mlperf_logger.constants.OPT_BASE_LR,
                             value=args.learning_rate, sync=False)
-    full_ar = torch.cuda.device_count() < torch.distributed.get_world_size()
+    full_ar = torch.cuda.device_count() < dist.get_world_size()
     if args.distributed_lamb:
         #from optim import distributed_fused_lamb
         ## overwrite methods for gradient-clipping-before-allreduce support
@@ -900,9 +925,16 @@ def prepare_model_and_optimizer(args, device, stream):
 #        grad_scaler.scale(loss).backward()
 #        optimizer._lazy_init_stage2()
 #        optimizer.zero_grad()
+    if args.deepspeed:
+        model, optimizer, _, lr_scheduler = deepspeed.initialize(args=args, model=model, optimizer=optimizer, model_parameters=model.named_parameters(), lr_scheduler=lr_scheduler)
     return model, optimizer, lr_scheduler, checkpoint, global_step        
 
 def take_optimizer_step(args, optimizer, model, overflow_buf, global_step):
+
+    if args.deepspeed:
+        import deepspeed.comm as dist
+    else:
+        import torch.distributed as dist
 
     global skipped_steps
     if args.allreduce_post_accumulation and args.use_cuda_graph:
@@ -933,9 +965,9 @@ def take_optimizer_step(args, optimizer, model, overflow_buf, global_step):
         amp_C.multi_tensor_scale(65536,
             overflow_buf,
             [master_grads, allreduced_views],
-            scaler.loss_scale() / (torch.distributed.get_world_size() * args.gradient_accumulation_steps))
+            scaler.loss_scale() / (dist.get_world_size() * args.gradient_accumulation_steps))
         # 3. sum gradient across ranks. Because of the predivision, this averages the gradient
-        torch.distributed.all_reduce(flat_raw)
+        dist.all_reduce(flat_raw)
         # 4. combine unscaling and unflattening of allreduced gradient
         overflow_buf.zero_()
         amp_C.multi_tensor_scale(65536,
@@ -974,6 +1006,11 @@ def take_optimizer_step(args, optimizer, model, overflow_buf, global_step):
     return global_step
 
 def run_graphed_eval(args, graph_eval, batch_placeholder, eval_dataloader, loss_eval, mlm_accuracy_eval, num_valid_eval, first_eval=False):
+    if args.deepspeed:
+        import deepspeed.comm as dist
+    else:
+        import torch.distributed as dist
+
     if first_eval:
         # there should be only 1 eval iteration if code reaches here
         for batch in eval_dataloader:
@@ -983,11 +1020,11 @@ def run_graphed_eval(args, graph_eval, batch_placeholder, eval_dataloader, loss_
     graph_eval.replay()
     mlm_accuracy_eval *= num_valid_eval
     loss_eval *= num_valid_eval
-    if torch.distributed.is_initialized():
+    if dist.is_initialized():
         #Collect total scores from all ranks
-        torch.distributed.all_reduce(mlm_accuracy_eval, op=torch.distributed.ReduceOp.SUM)
-        torch.distributed.all_reduce(loss_eval, op=torch.distributed.ReduceOp.SUM)
-        torch.distributed.all_reduce(num_valid_eval, op=torch.distributed.ReduceOp.SUM)
+        dist.all_reduce(mlm_accuracy_eval, op=dist.ReduceOp.SUM)
+        dist.all_reduce(loss_eval, op=dist.ReduceOp.SUM)
+        dist.all_reduce(num_valid_eval, op=dist.ReduceOp.SUM)
 
     # Average by number of examples
     mlm_accuracy_eval /= num_valid_eval
@@ -997,6 +1034,11 @@ def run_graphed_eval(args, graph_eval, batch_placeholder, eval_dataloader, loss_
 
 
 def run_eval(args, model, trainer, eval_dataloader, device, num_eval_examples, first_eval=False, use_cache=False):
+    if args.deepspeed:
+        import deepspeed.comm as dist
+    else:
+        import torch.distributed as dist
+
     model.eval()
 
     total_eval_loss, total_eval_mlm_acc = 0.0, 0.0
@@ -1027,11 +1069,11 @@ def run_eval(args, model, trainer, eval_dataloader, device, num_eval_examples, f
     #total_eval_mlm_acc and total_eval_loss are already tensors, total_masked is not
     #total_masked = torch.tensor(total_masked, device=device, dtype=torch.int64)
 
-    if torch.distributed.is_initialized():
+    if dist.is_initialized():
         #Collect total scores from all ranks
-        torch.distributed.all_reduce(total_eval_mlm_acc, op=torch.distributed.ReduceOp.SUM)
-        torch.distributed.all_reduce(total_eval_loss, op=torch.distributed.ReduceOp.SUM)
-        torch.distributed.all_reduce(total_masked, op=torch.distributed.ReduceOp.SUM)
+        dist.all_reduce(total_eval_mlm_acc, op=dist.ReduceOp.SUM)
+        dist.all_reduce(total_eval_loss, op=dist.ReduceOp.SUM)
+        dist.all_reduce(total_masked, op=dist.ReduceOp.SUM)
 
     # Average by number of examples
     total_eval_mlm_acc /= total_masked
@@ -1039,7 +1081,11 @@ def run_eval(args, model, trainer, eval_dataloader, device, num_eval_examples, f
 
     return total_eval_loss.item(), total_eval_mlm_acc.item()
 
-def exchange_padding_fast(device, input_ids, segment_ids, input_mask, masked_lm_labels, next_sentence_labels, max_batch_size):
+def exchange_padding_fast(device, input_ids, segment_ids, input_mask, masked_lm_labels, next_sentence_labels, max_batch_size, enableDeepspeed=False):
+    if enableDeepspeed:
+        import deepspeed.comm as dist
+    else:
+        import torch.distributed as dist
     torch.cuda.nvtx.range_push('exchangepadding')
     pad_size = max_batch_size - input_ids.shape[0]
     if pad_size > 0:
@@ -1048,10 +1094,10 @@ def exchange_padding_fast(device, input_ids, segment_ids, input_mask, masked_lm_
         input_mask = F.pad(input_mask, (0, 0, 0, pad_size))
         masked_lm_labels = F.pad(masked_lm_labels, (0, 0, 0, pad_size))
         next_sentence_labels = F.pad(next_sentence_labels, (0, pad_size))
-    ngpus = torch.distributed.get_world_size()
+    ngpus = dist.get_world_size()
     nseqs = input_mask.shape[0]
     ntokensperseq = input_mask.shape[1]
-    igpu = torch.distributed.get_rank()
+    igpu = dist.get_rank()
 
     flattened_length_seq = nseqs * ntokensperseq
     flattened_length_nsp = nseqs
@@ -1108,7 +1154,7 @@ def exchange_padding_fast(device, input_ids, segment_ids, input_mask, masked_lm_
     tensors_ = torch.zeros([ngpus, get_local_packet_size()], device=device, dtype=torch.float16)
     tensors_ = list(torch.split(tensors_, 1))
 
-    torch.distributed.all_gather(tensors_, tensors.view(torch.float16))
+    dist.all_gather(tensors_, tensors.view(torch.float16))
 
     tensors_ = torch.stack(tensors_).view(torch.int16).long()
     input_ids_, segment_ids_, input_mask_, masked_lm_labels_, next_sentence_labels_ = decode_packet(tensors_)
@@ -1156,6 +1202,11 @@ def main():
 
     device, args = setup_training(args)
 
+
+    if args.deepspeed:
+        import deepspeed.comm as dist
+    else:
+        import torch.distributed as dist
     mlperf_logger.mlperf_submission_log('bert')
 
     mlperf_logger.log_event(key=mlperf_logger.constants.SEED, value=args.seed,
@@ -1181,8 +1232,8 @@ def main():
     capture_stream = torch.cuda.Stream()
     model, optimizer, lr_scheduler, checkpoint, global_step = prepare_model_and_optimizer(args, device, capture_stream)
     
-    worker_seeds, shuffling_seeds = utils.setup_seeds(args.seed, args.num_epochs_to_generate_seeds_for, device)
-    worker_seed = worker_seeds[torch.distributed.get_rank()]
+    worker_seeds, shuffling_seeds = utils.setup_seeds(args.seed, args.num_epochs_to_generate_seeds_for, device, args.deepspeed)
+    worker_seed = worker_seeds[dist.get_rank()]
 
     random.seed(worker_seed)
     np.random.seed(worker_seed)
@@ -1314,11 +1365,11 @@ def main():
                 model = DDP(model,
                             message_size=250000000,
                             delay_allreduce=True,
-                            gradient_predivide_factor=torch.distributed.get_world_size())
+                            gradient_predivide_factor=dist.get_world_size())
             else:
                 assert False, "Invalid DDP type"
         else:
-            flat_dist_call([param.data for param in model.parameters()], torch.distributed.broadcast, (0,) )
+            flat_dist_call([param.data for param in model.parameters()], dist.broadcast, (0,) )
             if args.cuda_graph_mode=='segmented' or not use_cuda_graph:
                 loss, mlm_acc, _ = fwd_loss_bwd_trainer.step(-1,
                                                               batch_gpu_placeholder,
@@ -1447,7 +1498,7 @@ def main():
 
         now_step, now_skipped, skip_interval = 0, 0, 0
 
-        sbridge = init_bridge(torch.distributed.get_rank())
+        sbridge = init_bridge(dist.get_rank())
 
         while global_step < args.max_steps and not end_training:
             samples_trained = global_step * args.train_batch_size * args.gradient_accumulation_steps * args.n_gpu
@@ -1482,12 +1533,12 @@ def main():
             shared_file_list = {}
             sbridge.start_prof(SBridge.LOAD_TIME)
 
-            if torch.distributed.is_initialized() and torch.distributed.get_world_size() > num_files:
-                remainder = torch.distributed.get_world_size() % num_files
-                data_file = files[(f_start_id*torch.distributed.get_world_size() + torch.distributed.get_rank() +
+            if dist.is_initialized() and dist.get_world_size() > num_files:
+                remainder = dist.get_world_size() % num_files
+                data_file = files[(f_start_id*dist.get_world_size() + dist.get_rank() +
                                    remainder * f_start_id) % num_files]
             else:
-                data_file = files[(f_start_id*torch.distributed.get_world_size() + torch.distributed.get_rank()) % num_files]
+                data_file = files[(f_start_id*dist.get_world_size() + dist.get_rank()) % num_files]
 
             previous_file = data_file
 
@@ -1513,11 +1564,11 @@ def main():
             sbridge.stop_prof(SBridge.LOAD_TIME)
 
             for f_id in range(f_start_id + 1, len(files)):
-                if torch.distributed.get_world_size() > num_files:
-                    data_file = files[(f_id*torch.distributed.get_world_size() + torch.distributed.get_rank() +
+                if dist.get_world_size() > num_files:
+                    data_file = files[(f_id*dist.get_world_size() + dist.get_rank() +
                                        remainder * f_id) % num_files]
                 else:
-                    data_file = files[(f_id*torch.distributed.get_world_size() + torch.distributed.get_rank())%num_files]
+                    data_file = files[(f_id*dist.get_world_size() + dist.get_rank())%num_files]
 
                 previous_file = data_file
                 if need_next_training_shard:
@@ -1551,7 +1602,7 @@ def main():
 
                     if args.exchange_padding == True:                        
                         batch = [t.to(device, non_blocking=True, dtype=torch.int16) for t in batch]
-                        batch = exchange_padding_fast(device, *batch, args.train_batch_size)
+                        batch = exchange_padding_fast(device, *batch, args.train_batch_size, args.deepspeed)
                     elif args.cuda_graph_mode=='segmented' or not use_cuda_graph:
                         batch = [t.to(device, non_blocking=True) for t in batch]
                     else: # full_iteration capture mode
@@ -1660,8 +1711,8 @@ def main():
                         if update_step:
                             accuracy_scores = accuracy_scores[-args.train_mlm_accuracy_window_size * args.gradient_accumulation_steps:]
                             avg_mlm_accuracy[0] = sum(accuracy_scores) / len(accuracy_scores)
-                            torch.distributed.all_reduce(avg_mlm_accuracy, op=torch.distributed.ReduceOp.SUM)
-                            avg_mlm_accuracy /= torch.distributed.get_world_size()
+                            dist.all_reduce(avg_mlm_accuracy, op=dist.ReduceOp.SUM)
+                            avg_mlm_accuracy /= dist.get_world_size()
 
                     if args.log_freq > 0 and training_steps % (args.log_freq * args.gradient_accumulation_steps) == 0:
                         samples_trained = global_step * args.train_batch_size * args.gradient_accumulation_steps * args.n_gpu
@@ -1719,9 +1770,9 @@ def main():
                             last_num_steps = int(training_steps / args.gradient_accumulation_steps) % args.log_freq
                             last_num_steps = args.log_freq if last_num_steps == 0 else last_num_steps
                             average_loss = average_loss / (last_num_steps * divisor)
-                        if (torch.distributed.is_initialized()):
-                            average_loss /= torch.distributed.get_world_size()
-                            torch.distributed.all_reduce(average_loss)
+                        if (dist.is_initialized()):
+                            average_loss /= dist.get_world_size()
+                            dist.all_reduce(average_loss)
                         final_loss = average_loss.item()
                         if utils.is_main_process():
                             if args.train_mlm_accuracy_window_size > 0:
@@ -1801,9 +1852,14 @@ if __name__ == "__main__":
     now = time.time()
     args, final_loss, train_time_raw, training_steps = main()
 
+    if args.deepspeed:
+        import deepspeed.comm as dist
+    else:
+        import torch.distributed as dist
+
     gpu_count = args.n_gpu
-    if torch.distributed.is_initialized():
-        gpu_count = torch.distributed.get_world_size()
+    if dist.is_initialized():
+        gpu_count = dist.get_world_size()
     if utils.is_main_process():
         e2e_time = time.time() - now
         training_perf = global_batch_size(args) \

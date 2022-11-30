@@ -1,5 +1,6 @@
 #!/bin/bash
 pip3 install ninja
+python3 -m pip install deepspeed --user
 pip3 install --no-cache-dir -r requirements.txt
 cd mhalib
 python3 setup.py build && cp build/lib*/mhalib* ../

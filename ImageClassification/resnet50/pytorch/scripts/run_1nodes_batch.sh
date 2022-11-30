@@ -14,7 +14,10 @@
 #SBATCH --partition=MI250-ubuntu20
 # Resource configuration
 #SBATCH --nodes=1
+#SBATCH --partition=MI210
+#SBATCH --partition=MI250
 #SBATCH --partition=MI250-x4-IB
 #SBATCH --ntasks-per-node=1
+#SBATCH --gpus-per-node=8
 #SBATCH --time=01:59:00
 srun -N 1  $@

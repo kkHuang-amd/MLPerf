@@ -20,7 +20,11 @@ export DGXSOCKETCORES=64
 export DGXNSOCKET=2
 export DGXHT=1         # HT is on is 2, HT off is 1
 
+#export MIOPEN_FIND_ENFORCE=4
+#export MIOPEN_FIND_MODE=1
+
 export MIOPEN_FIND_MODE=5
+
 export MIOPEN_GEMM_ENFORCE_BACKEND=1
 export MIOPEN_DEBUG_CONV_DIRECT=0
 

@@ -248,7 +248,8 @@ class ConvTranspose2d_NHWC(_ConvTransposeMixin, _ConvNd):
         if self.padding_mode != 'zeros':
             raise ValueError('Only `zeros` padding mode is supported for ConvTranspose2d')
 
-        output_padding = self._output_padding(input, output_size, self.stride, self.padding, self.kernel_size)
+        output_padding = self._output_padding(input, output_size, self.stride, self.padding, self.kernel_size, 2)
+        #output_padding = self._output_padding(input, output_size, self.stride, self.padding, self.kernel_size)
         if self.bias is None:
             return conv2d_transpose_NHWC_impl.apply(
                 input, self.weight, self.bias, self.stride, self.padding,

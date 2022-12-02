@@ -38,8 +38,9 @@ echo $DATA_DIR
 
 num_gpus=${1}
 dis_fused_lamb=${2:-0}
-enable_fmha=${3:-0}
-precision=${4:-"fp16"}
+ddp_method=${3:-"torchdpp"}
+enable_fmha=${4:-0}
+precision=${5:-"fp16"}
 resume_training=${8:-"false"}
 create_logfile=${9:-"true"}
 accumulate_gradients=${10:-"true"}
@@ -147,6 +148,9 @@ CMD+=" --eval_batch_size=16"
 CMD+=" --cache_eval_data --num_eval_examples 10000"  
 #CMD+=" --use_ddp --ddp_type=native"
 CMD+=" --log_freq=1"
+if [ "$ddp_method" == "deepspeed" ]; then
+    CMD+=" --deepspeed --deepspeed_config ds_config.json"
+fi
 
 CMD="python3 -m torch.distributed.launch --nproc_per_node=$num_gpus $CMD"
 #fi
@@ -155,9 +159,9 @@ hostname=`hostname`
 if [ "$create_logfile" = "true" ] ; then
   export GBS=$(expr $train_batch_size_phase2 \* $num_gpus)
   if [[ $dis_fused_lamb -eq 0 ]] ; then
-      printf -v TAG "pyt_bert_pretraining_phase2_%s_gbs%d_lr-${learning_rate_phase2}_$hostname" "$precision" $GBS
+      printf -v TAG "pyt_bert_pretraining_phase2_%s_gbs%d_lr-${learning_rate_phase2}_$hostname_${ddp_method}" "$precision" $GBS
   else
-      printf -v TAG "pyt_bert_pretraining_phase2_%s_gbs%d_dis-lamb_lr-${learning_rate_phase2}_max-ch-${NCCL_MAX_NCHANNELS}_$hostname" "$precision" $GBS
+      printf -v TAG "pyt_bert_pretraining_phase2_%s_gbs%d_dis-lamb_lr-${learning_rate_phase2}_max-ch-${NCCL_MAX_NCHANNELS}_$hostname_${ddp_method}" "$precision" $GBS
   fi
   DATESTAMP=`date +'%y%m%d%H%M%S'`
   LOGFILE=$RESULTS_DIR/$job_name.$TAG.$DATESTAMP.log

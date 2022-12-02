@@ -19,6 +19,8 @@ echo "killing all previous python processes"
 echo "Clear page cache"
 sync && sudo /sbin/sysctl vm.drop_caches=3
 
+platform=$(rocminfo | grep gfx | head -n1 | awk '{print $2}')
+
 NCCL_MAX_NCHANNELS=${NCCL_MAX_NCHANNELS:-8}
 
 export NCCL_MIN_NCHANNELS=4
@@ -43,7 +45,13 @@ create_logfile=${9:-"true"}
 accumulate_gradients=${10:-"true"}
 seed=${12:-$RANDOM}
 job_name=${13:-"bert_lamb_pretraining"}
-train_batch_size_phase2=${17:-56} ##Decrease BS to 27 to run on MI100
+if [ "$platform" == "gfx90a" ]; then
+    train_batch_size_phase2=${17:-56} 
+else
+    train_batch_size_phase2=${17:-27} 
+fi
+
+echo "$platform $train_batch_size_phase2"
 learning_rate_phase2=${18:-"3.25e-4"}
 warmup_proportion_phase2=${19:-"0.0"}
 train_steps_phase2=${20:-15000} 

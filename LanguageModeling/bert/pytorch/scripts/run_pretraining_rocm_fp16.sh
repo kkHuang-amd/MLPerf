@@ -19,8 +19,6 @@ echo "killing all previous python processes"
 echo "Clear page cache"
 sync && sudo /sbin/sysctl vm.drop_caches=3
 
-platform=$(rocminfo | grep gfx | head -n1 | awk '{print $2}')
-
 NCCL_MAX_NCHANNELS=${NCCL_MAX_NCHANNELS:-8}
 
 export NCCL_MIN_NCHANNELS=4
@@ -39,26 +37,19 @@ echo $DATA_DIR
 num_gpus=${1}
 dis_fused_lamb=${2:-0}
 ddp_method=${3:-"torchdpp"}
-enable_fmha=${4:-0}
-precision=${5:-"fp16"}
+precision=${4:-"fp16"}
 resume_training=${8:-"false"}
 create_logfile=${9:-"true"}
 accumulate_gradients=${10:-"true"}
-seed=${12:-$RANDOM}
 job_name=${13:-"bert_lamb_pretraining"}
-if [ "$platform" == "gfx90a" ]; then
-    train_batch_size_phase2=${17:-56} 
-else
-    train_batch_size_phase2=${17:-27} 
-fi
-
-echo "$platform $train_batch_size_phase2"
-learning_rate_phase2=${18:-"3.25e-4"}
-warmup_proportion_phase2=${19:-"0.0"}
-train_steps_phase2=${20:-15000} 
+seed=${SEED:-$RANDOM}
+train_batch_size_phase2=${BATCHSIZE:-56} ##Decrease BS to 27 to run on MI100
+learning_rate_phase2=${LR:-"3.25e-4"}
+train_steps_phase2=${MAX_STEPS:-15000} 
+warmup_proportion_phase2=${WARMUP_PROPORTION:-"0.0"}
 allreduce_post_accumulation=${14:-"true"}
 allreduce_post_accumulation_fp16=${15:-"true"}
-gradient_accumulation_steps_phase2=${21:-1}
+gradient_accumulation_steps_phase2=${GRADIENT_STEPS:-1}
 BERT_CONFIG="${DATA_DIR}/bert_config.json"
 CODEDIR=${24:-"./"}
 init_checkpoint=${25:-"${DATA_DIR}/model.ckpt-28252.pt"}
@@ -133,8 +124,8 @@ CMD+=" --weight_decay_rate=${WEIGHT_DECAY_RATE:-0.01}"
 CMD+=" --do_train --phase2 --skip_checkpoint"
 CMD+=" --train_mlm_accuracy_window_size=0"
 CMD+=" --target_mlm_accuracy=0.720"
-CMD+=" --max_samples_termination=18400000"
-CMD+=" --dense_seq_output --unpad --exchange_padding --fused_gelu_bias --fused_mha"
+CMD+=" --max_samples_termination=${MAX_SAMPLES_TERMINATION:-18400000}"
+CMD+=" $EXTRA_PARAMS"
 #--fused_bias_fc --fused_bias_mha --fused_dropout_add
 #CMD+=" --unpad_fmha" 
 if [[ $dis_fused_lamb -eq 1 ]] ; then
@@ -159,9 +150,9 @@ hostname=`hostname`
 if [ "$create_logfile" = "true" ] ; then
   export GBS=$(expr $train_batch_size_phase2 \* $num_gpus)
   if [[ $dis_fused_lamb -eq 0 ]] ; then
-      printf -v TAG "pyt_bert_pretraining_phase2_%s_gbs%d_lr-${learning_rate_phase2}_$hostname_${ddp_method}" "$precision" $GBS
+      printf -v TAG "pyt_bert_pretraining_phase2_%s_gbs%d_lr-${learning_rate_phase2}_${hostname}_${ddp_method}" "$precision" $GBS
   else
-      printf -v TAG "pyt_bert_pretraining_phase2_%s_gbs%d_dis-lamb_lr-${learning_rate_phase2}_max-ch-${NCCL_MAX_NCHANNELS}_$hostname_${ddp_method}" "$precision" $GBS
+      printf -v TAG "pyt_bert_pretraining_phase2_%s_gbs%d_dis-lamb_lr-${learning_rate_phase2}_max-ch-${NCCL_MAX_NCHANNELS}_${hostname}_${ddp_method}" "$precision" $GBS
   fi
   DATESTAMP=`date +'%y%m%d%H%M%S'`
   LOGFILE=$RESULTS_DIR/$job_name.$TAG.$DATESTAMP.log

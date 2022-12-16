@@ -1,11 +1,7 @@
 #!/bin/bash
 
 ## User setting
-CLUSTER="munich"
-if [[ $CLUSTER == "munich" ]]; then
-    export DATASET_PATH=/global/scratch/mlperf_datasets/open-images-v6
-fi
-
+export DATASET_PATH=/global/scratch/mlperf_datasets/open-images-v6
 export TORCH_HOME=$PWD/.cache/torch
 export BATCHSIZE=32
 export NUMEPOCHS=1

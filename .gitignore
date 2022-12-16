@@ -1,5 +1,7 @@
+.cache/
 data/
 results/
+tensorboard/
 __pycache__/
 *.log
 *.err

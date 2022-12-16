@@ -43,4 +43,3 @@ RUN pip uninstall -y pycocotools
 RUN pip install --no-cache-dir pybind11
 RUN pip install --no-cache-dir -r requirements.txt
 ################################################################################
-

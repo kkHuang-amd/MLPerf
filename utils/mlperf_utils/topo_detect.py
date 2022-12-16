@@ -109,6 +109,7 @@ def get_cpu_offsets(num_gpus_per_numa, numa_cpu_map):
     return offsets
 
 def get_gpu_numa_map(args, rccl_topo_file, keep_topo_file):
+    torch.multiprocessing.set_start_method('spawn')
     dist_world_size = args.nproc_per_node * args.nnodes
 
     os.environ["MASTER_ADDR"] = args.master_addr

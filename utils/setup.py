@@ -1,4 +1,12 @@
+import os
 from setuptools import setup
+
+if os.system("apt-get install -y hwloc"):
+    print ("ERROR: Failed to install hwloc.")
+    sys.exit(1)
+if os.system("apt-get install -y numactl"):
+    print ("ERROR: Failed to install numactl.")
+    sys.exit(1)
 
 setup(
     name="mlperf_utils",

@@ -1,0 +1,15 @@
+#!/bin/bash
+SHOW_MIOPEN_LOG=0
+ENFORCE_MIOPEN_SEARCH=1
+
+if [ $SHOW_MIOPEN_LOG -gt 0 ]; then
+    export ROCBLAS_LAYER=2
+    export MIOPEN_ENABLE_LOGGING_CMD=1
+    export MIOPEN_LOG_LEVEL=7
+    export TENSILE_DB=0x8000
+fi
+
+if [ $ENFORCE_MIOPEN_SEARCH -gt 0 ]; then
+    export MIOPEN_FIND_MODE=NORMAL
+    export MIOPEN_FIND_ENFORCE=SEARCH_DB_UPDATE
+fi

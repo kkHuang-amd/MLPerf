@@ -1,4 +1,4 @@
-# Copyright (c) 2018-2021, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2018-2022, NVIDIA CORPORATION. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,24 +12,71 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ARG FROM_IMAGE_NAME=pytorch/pytorch:1.10.0-cuda11.3-cudnn8-devel
-# ARG FROM_IMAGE_NAME=nvcr.io/nvidia/pytorch:22.01-py3
+ARG FROM_IMAGE_NAME=nvcr.io/nvidia/pytorch:22.09-py3
+
+################################################################################
+# DALI box iou builder image
+################################################################################
+FROM ${FROM_IMAGE_NAME} AS dali-box-iou-builder
+WORKDIR /workspace/csrc
+COPY csrc/dali_box_iou ./dali_box_iou
+
+# Build CUDA box iou (written as a DALI extension)
+RUN cd dali_box_iou && \
+    mkdir build && \
+    cd build && \
+    cmake .. && \
+    make
+################################################################################
+
+
+################################################################################
+# DALI proposal matcher builder image
+################################################################################
+FROM ${FROM_IMAGE_NAME} AS dali-proposal-matcher-builder
+WORKDIR /workspace/csrc
+COPY csrc/dali_proposal_matcher ./dali_proposal_matcher
+
+# Build CUDA proposal matcher (written as a DALI extension)
+RUN cd dali_proposal_matcher && \
+    mkdir build && \
+    cd build && \
+    cmake .. && \
+    make
+################################################################################
+
+
+################################################################################
+# RetinaNet
+################################################################################
 FROM ${FROM_IMAGE_NAME}
 
-# Make sure git is installed (needed by pip)
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-        git \
- && rm -rf /var/lib/apt/lists/*
+# Build args
+ARG MAX_JOBS=4
+ARG TORCH_CUDNN_V8_API_ENABLED=1
 
-# Install python dependencies
-COPY requirements.txt /
-# Cython needs to be present before attempting to install pycocotools
-RUN pip install --no-cache-dir Cython
-RUN pip install --no-cache-dir -r /requirements.txt
+# Set env vars
+ENV MAX_JOBS=${MAX_JOBS}
+ENV TORCH_CUDNN_V8_API_ENABLED=${TORCH_CUDNN_V8_API_ENABLED}
 
-# Copy code
-COPY . /workspace/single_stage_detector
+# Install dependencies for system configuration logger
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends infiniband-diags pciutils && \
+    rm -rf /var/lib/apt/lists/*
 
 # Set working directory
-WORKDIR /workspace/single_stage_detector/ssd
+WORKDIR /workspace/ssd
+
+# Copy code
+COPY . .
+
+# Remove the container's pycocotools in favor of the nvidia optimized version (installed from requirements.txt)
+RUN pip uninstall -y pycocotools
+
+# Install python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy DALI box iou and proposal matcher
+COPY --from=dali-box-iou-builder /workspace/csrc/dali_box_iou/build/lib_box_iou.so /usr/local/lib/lib_box_iou.so
+COPY --from=dali-proposal-matcher-builder /workspace/csrc/dali_proposal_matcher/build/lib_proposal_matcher.so /usr/local/lib/lib_proposal_matcher.so
+################################################################################

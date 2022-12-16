@@ -1,24 +1,21 @@
 <h1 align="center">Single Shot Detector (SSD)</h1>
 
 - [Summary](#summary)
-- [Running the reference](#running-the-reference)
-  - [Prerequisites](#prerequisites)
+- [Running the benchmark](#running-the-benchmark)
+  - [Requirements](#requirements)
   - [Building the docker image](#building-the-docker-image)
   - [Download dataset](#download-dataset)
   - [Download the pretrained backbone](#download-the-pretrained-backbone)
-  - [Training on NVIDIA DGX-A100 (single node) with docker](#training-on-nvidia-dgx-a100-single-node-with-docker)
   - [Training on NVIDIA DGX-A100 (single node) with SLURM](#training-on-nvidia-dgx-a100-single-node-with-slurm)
   - [Training on NVIDIA DGX-A100 (multi node) with SLURM](#training-on-nvidia-dgx-a100-multi-node-with-slurm)
+  - [Training on NVIDIA DGX-A100 (single node) with docker](#training-on-nvidia-dgx-a100-single-node-with-docker)
   - [Hyperparameter settings](#hyperparameter-settings)
 - [Dataset/Environment](#datasetenvironment)
   - [Publication/Attribution](#publicationattribution)
   - [The MLPerf Subset](#the-mlperf-subset)
 - [Model](#model)
   - [Backbone](#backbone)
-  - [Head network](#head-network)
-  - [Detection heads and anchors](#detection-heads-and-anchors)
   - [Weight and bias initialization](#weight-and-bias-initialization)
-  - [Ground truth and loss function](#ground-truth-and-loss-function)
   - [Input augmentations](#input-augmentations)
   - [Publication/Attribution](#publicationattribution-1)
 - [Quality](#quality)
@@ -40,41 +37,31 @@ proposal network (RPN) based networks, making it more suited for real time
 applications like automotive and low power devices like mobile phones. This is
 also sometimes referred to as being a "single shot" detector for inference.
 
-# Running the reference
-The reference code is intended to run on NVIDIA GPUs, it is tested on A100 and
-V100 cards but other GPUs should work too.
+# Running the benchmark
+The benchmark is intended to run on NVIDIA GPUs, it is tested on A100 but other GPUs should work too (some optimization flags might not be available in all GPU generations).
 
-## Prerequisites
-The recommended way to run the reference is with docker. You need to setup your
+## Requirements
+The recommended way to run the benchmark is within docker containers. You need to setup your
 machine with:
-1. NVIDIA drivers. Can be installed with [CUDA toolkit](https://developer.nvidia.com/cuda-downloads).
+1. [PyTorch 22.09-py3 NGC container](https://ngc.nvidia.com/registry/nvidia-pytorch)
 2. [Docker](https://docs.docker.com/engine/install/)
 3. [NVIDIA container runtime](https://github.com/NVIDIA/nvidia-docker)
-
-If you are using Ubuntu 20.04, you can install these components by running:
-```bash
-bash ./install_cuda_docker.sh
-```
-
-In addition to the above requirements, it's recommended to use
-[Slurm](https://developer.nvidia.com/slurm) for Multi-node training
-(the installation and configuration of Slurm is cluster depended and not
-covered in this README).
+4. Slurm with [Pyxis](https://github.com/NVIDIA/pyxis) and [Enroot](https://github.com/NVIDIA/enroot) (multi-node)
 
 ## Building the docker image
-Once the prerequisites are met, you can build the benchmark docker image with:
+Once the above requirements have been met, you can build the benchmark docker image with:
 ```bash
-cd ./single_stage_detector/
-docker build -t mlperf/single_stage_detector .
+docker build --pull -t <DOCKER_REGISTRY>/mlperf-nvidia:single_stage_detector-pytorch .
+docker push <DOCKER_REGISTRY>/mlperf-nvidia:single_stage_detector-pytorch
 ```
 
 ## Download dataset
 The benchmark uses a subset of [OpenImages-v6](https://storage.googleapis.com/openimages/web/index.html).
 To download the subset:
 ```bash
-cd ./single_stage_detector/scripts
 pip install fiftyone
-./download_openimages_mlperf.sh -d <DOWNLOAD_PATH>
+cd ./public-scripts
+./download_openimages_mlperf.sh -d <DATAPATH>
 ```
 
 The script will download the benchmark subset with metadata and labels, then
@@ -82,7 +69,7 @@ convert the labels to [COCO](https://cocodataset.org/#home) format. The
 downloaded dataset size is 352GB and the expected folder structure after
 running the script is:
 ```
-<DOWNLOAD_PATH>
+<DATAPATH>
 │
 └───info.json
 │
@@ -115,7 +102,6 @@ running the script is:
 
 Read more about the mlperf subset [here](#the-mlperf-subset).
 
-
 ## Download the pretrained backbone
 The benchmark uses a ResNeXt50_32x4d backbone pretrained on ImageNet. The
 weights are downloaded from PyTorch hub.
@@ -125,48 +111,10 @@ By default, the code will automatically download the weights to
 
 Alternatively, you can manually download the weights with:
 ```bash
-bash ./single_stage_detector/scripts/download_backbone.sh
+bash ./public-scripts/download_backbone.sh
 ```
 
 Then use the downloaded file with `--pretrained <PATH TO WEIGHTS>` .
-
-If you wish to use the backbone in frameworks other than PyTorch, the repository
-provides scripts to convert the weights to ONNX format and a pickled dictionary
-of numpy arrays:
-```bash
-./single_stage_detector/scripts/pth_to_onnx.py --help
-./single_stage_detector/scripts/pth_to_pickle.py --help
-```
-
-## Training on NVIDIA DGX-A100 (single node) with docker
-Launch configuration and system-specific hyperparameters for the NVIDIA DGX-A100
-single node reference are in the `config_DGXA100_001x08x032.sh` script.
-
-To launch single node training on NVIDIA DGX-A100 with docker, start
-an interactive container:
-
-```bash
-docker run --rm -it \
-  --gpus=all \
-  --ipc=host \
-  -v <HOST_DATA_DIR>:/datasets/open-images-v6-mlperf \
-  mlperf/single_stage_detector bash
-```
-
-Then start training with:
-
-```bash
-source config_DGXA100_001x08x032.sh
-./run_and_time.sh
-```
-
-Alternatively, you can use torchrun to call the training script directly:
-
-```bash
-torchrun <torchrun arguments> train.py <training arguments>
-```
-
-You can read more about torchrun [here](https://pytorch.org/docs/stable/elastic/run.html).
 
 ## Training on NVIDIA DGX-A100 (single node) with SLURM
 Launch configuration and system-specific hyperparameters for the NVIDIA DGX-A100
@@ -175,23 +123,61 @@ single node reference are in the `config_DGXA100_001x08x032.sh` script.
 Steps required to launch single node training on NVIDIA DGX-A100:
 
 ```bash
-cd ./single_stage_detector/ssd
 source config_DGXA100_001x08x032.sh
-DATADIR=<path/to/data/dir> LOGDIR=<path/to/output/dir> ./run.sub
+CONT="<DOCKER_REGISTRY>/mlperf-nvidia:single_stage_detector-pytorch" DATADIR="<path/to/dir/containing/openimages/dir>" LOGDIR="<path/to/output/dir>" BACKBONE_DIR="<$(pwd) or path/to/pretrained/ckpt>" sbatch -N $DGXNNODES -t $WALLTIME run.sub
 ```
 
 ## Training on NVIDIA DGX-A100 (multi node) with SLURM
 Launch configuration and system-specific hyperparameters for the NVIDIA DGX-A100
-multi node reference are in the `config_DGXA100_008x08x008.sh` and
-`config_DGXA100_032x08x032.sh` scripts.
+multi node reference are in the `config_DGXA100_*.sh` scripts.
 
 Steps required to launch multi node training on NVIDIA DGX-A100:
 
 ```bash
-cd ./single_stage_detector/ssd
-source config_DGXA100_008x08x008.sh # or config_DGXA100_032x08x032.sh
-DATADIR=<path/to/data/dir> LOGDIR=<path/to/output/dir> sbatch -N $DGXNNODES -t $WALLTIME run.sub
+source <MULT_NODE_CONFIG>
+CONT="<DOCKER_REGISTRY>/mlperf-nvidia:single_stage_detector-pytorch" DATADIR="<path/to/dir/containing/openimages/dir>" LOGDIR="<path/to/output/dir>" BACKBONE_DIR="<$(pwd) or path/to/pretrained/ckpt>" sbatch -N $DGXNNODES -t $WALLTIME run.sub
 ```
+
+## Training on NVIDIA DGX-A100 (single node) with docker
+When generating results for the official v2.0 submission with one node, the
+benchmark was launched onto a cluster managed by a SLURM scheduler. The
+instructions in [Training on NVIDIA DGX-A100 (single node) with SLURM](#training-on-nvidia-dgx-a100-single-node-with-slurm) explain how that is done.
+
+However, to make it easier to run this benchmark on a wider set of machine
+environments, we are providing here an alternate set of launch instructions
+that can be run using nvidia-docker. Note that performance or functionality may
+vary from the tested SLURM instructions.
+
+Launch configuration and system-specific hyperparameters for the NVIDIA DGX-A100
+single node reference are in the `config_DGXA100_001x08x032.sh` script.
+
+To launch single node training on NVIDIA DGX-A100 with docker, start
+training with:
+
+```bash
+source config_DGXA100_001x08x032.sh
+CONT="<DOCKER_REGISTRY>/mlperf-nvidia:single_stage_detector-pytorch" DATADIR="<path/to/dir/containing/openimages/dir>" LOGDIR="<path/to/output/dir>" BACKBONE_DIR="<$(pwd) or path/to/pretrained/ckpt>" ./run_with_docker.sh
+
+```
+
+Alternatively, you can launch an interactive docker session:
+
+```bash
+docker run --rm -it \
+  --gpus=all \
+  --ipc=host \
+  -v <DATADIR>:/datasets/open-images-v6-mlperf \
+  <DOCKER_REGISTRY>/mlperf-nvidia:single_stage_detector-pytorch bash
+```
+
+Then launching the training command manually with:
+
+```bash
+source config_DGXA100_001x08x032.sh
+torchrun --standalone --nproc_per_node=${DGXNGPU} --no_python ./run_and_time.sh
+```
+
+You can read more about torchrun [here](https://pytorch.org/docs/stable/elastic/run.html).
 
 ## Hyperparameter settings
 Hyperparameters are recorded in the `config_*.sh` files for each configuration
@@ -269,11 +255,6 @@ The weights of the first two stages are frozen
 In addition, all batch norm layers in the backbone are frozen
 ([code](https://github.com/mlcommons/training/blob/master/single_stage_detector/ssd/model/backbone_utils.py#L52)).
 
-## Head network
-TODO
-
-## Detection heads and anchors
-TODO
 
 ## Weight and bias initialization
 1. The ResNeXt50_32x4d backbone is initialized with the pretrained weights
@@ -281,7 +262,7 @@ TODO
 
 2. The classification head weights are initialized using normal distribution
    with `mean=0` and `std=0.01`. The biases are initialized with zeros, except
-   for the classification convolution which is initalized with
+   for the classification convolution which is initialized with
    `constant=-4.59511985013459`
    ([code](https://github.com/mlcommons/training/blob/master/single_stage_detector/ssd/model/retinanet.py#L85-L90)).
 
@@ -294,9 +275,6 @@ TODO
    with zeros
    ([code](https://github.com/mlcommons/training/blob/master/single_stage_detector/ssd/model/feature_pyramid_network.py#L90-L91)).
 
-## Ground truth and loss function
-TODO: add more details
-Focall Loss
 
 ## Input augmentations
 The input images are assumed to be sRGB with values in range 0.0 through 1.0.
@@ -340,6 +318,10 @@ Saining Xie, Ross Girshick, Piotr Dollár, Zhuowen Tu, Kaiming He.
 
 Tsung-Yi Lin, Priya Goyal, Ross Girshick, Kaiming He, Piotr Dollár.
 [Focal Loss for Dense Object Detection](https://arxiv.org/abs/1708.02002)
+
+Torchvision pretrained [ResNeXt50_32x4d](https://pytorch.org/vision/0.12/models.html#id25) on ImageNet
+
+Torchvision [RetinaNet](https://pytorch.org/vision/0.12/models.html#id65)
 
 # Quality
 ## Quality metric

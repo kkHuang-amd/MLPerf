@@ -15,7 +15,7 @@
 # limitations under the License.
 
 
-: "${DATASET_PATH:=/datasets/open-images-v6}"
+: "${DATASET_PATH:=/global/scratch/mlperf_datasets/open-images-v6}"
 
 while [ "$1" != "" ]; do
     case $1 in

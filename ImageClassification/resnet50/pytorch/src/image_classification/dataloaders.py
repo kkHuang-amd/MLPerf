@@ -73,20 +73,19 @@ def fast_collate(memory_format, batch):
 
 
 class PrefetchedWrapper(object):
-    def prefetched_loader(loader, num_classes, fp16, one_hot):
+    def prefetched_loader(stream, loader, num_classes, fp16, one_hot):
         mean = torch.tensor([0.485 * 255, 0.456 * 255, 0.406 * 255]).cuda().view(1,3,1,1)
         std = torch.tensor([0.229 * 255, 0.224 * 255, 0.225 * 255]).cuda().view(1,3,1,1)
         if fp16:
             mean = mean.half()
             std = std.half()
 
-        stream = torch.cuda.Stream()
         first = True
 
         for next_input, next_target in loader:
             with torch.cuda.stream(stream):
-                next_input = next_input.cuda()                
-                next_target = next_target.cuda()
+                next_input = next_input.cuda(non_blocking=True)
+                next_target = next_target.cuda(non_blocking=True)
                 if fp16:
                     next_input = next_input.half()
                     if one_hot:
@@ -115,7 +114,7 @@ class PrefetchedWrapper(object):
         self.epoch = 0
         self.one_hot = one_hot
         self.num_classes = num_classes
-
+        self.stream = torch.cuda.Stream()
     def __iter__(self):
         if (self.dataloader.sampler is not None and
             isinstance(self.dataloader.sampler,
@@ -123,5 +122,5 @@ class PrefetchedWrapper(object):
 
             self.dataloader.sampler.set_epoch(self.epoch)
         self.epoch += 1
-        return PrefetchedWrapper.prefetched_loader(self.dataloader, self.num_classes, self.fp16, self.one_hot)
+        return PrefetchedWrapper.prefetched_loader(self.stream, self.dataloader, self.num_classes, self.fp16, self.one_hot)
 

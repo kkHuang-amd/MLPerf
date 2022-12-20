@@ -16,5 +16,5 @@ export PHASE=2
 export EVAL_ITER_START_SAMPLES=150000
 export EVAL_ITER_SAMPLES=150000
 
-export RESULT_DIR="./results/1-nodes"
+export RESULT_DIR="./results/2-nodes"
 mkdir -p $RESULT_DIR

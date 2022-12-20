@@ -53,7 +53,7 @@ gradient_accumulation_steps_phase2=${GRADIENT_STEPS:-1}
 BERT_CONFIG="${DATA_DIR}/bert_config.json"
 CODEDIR=${24:-"./"}
 init_checkpoint=${25:-"${DATA_DIR}/model.ckpt-28252.pt"}
-RESULTS_DIR=$CODEDIR/results
+RESULTS_DIR=${RESULT_DIR:-"$CODEDIR/results"}
 CHECKPOINTS_DIR=$RESULTS_DIR/checkpoints
 
 mkdir -p $CHECKPOINTS_DIR

@@ -51,7 +51,7 @@ def get_pytorch_val_loader(data_path, batch_size, num_classes, one_hot, workers=
             batch_size=batch_size, shuffle=False,
             num_workers=workers, worker_init_fn=_worker_init_fn, pin_memory=True,
             collate_fn=partial(fast_collate, memory_format))
-    return PrefetchedWrapper(val_loader, num_classes, fp16, one_hot), len(val_loader)
+    return PrefetchedWrapper(list(val_loader), num_classes, fp16, one_hot), len(val_loader)
 
 
 def fast_collate(memory_format, batch):
@@ -116,7 +116,7 @@ class PrefetchedWrapper(object):
         self.num_classes = num_classes
         self.stream = torch.cuda.Stream()
     def __iter__(self):
-        if (self.dataloader.sampler is not None and
+        if (isinstance(self.dataloader, torch.utils.data.DataLoader) and self.dataloader.sampler is not None and
             isinstance(self.dataloader.sampler,
                        torch.utils.data.distributed.DistributedSampler)):
 

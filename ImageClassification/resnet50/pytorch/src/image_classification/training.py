@@ -310,12 +310,14 @@ def get_train_step(model_and_loss, optimizer, fp16, use_amp = False, batch_size_
 
         if hvd.is_initialized():
             optimizer.synchronize()
+            optimizer.skip_synchronize()
 
         if optimizer_step:
             opt = optimizer
-            for param_group in opt.param_groups:
-                for param in param_group['params']:
-                    param.grad /= batch_size_multiplier
+            if batch_size_multiplier != 1:
+                for param_group in opt.param_groups:
+                    for param in param_group['params']:
+                        param.grad /= batch_size_multiplier
 
             if deepspeed.comm.is_initialized():
                 model_and_loss.model.step()

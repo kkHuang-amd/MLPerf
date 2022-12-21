@@ -24,6 +24,7 @@ import sys
 from mlperf_logger import configure_logger, log_start, log_end, log_event, set_seeds, get_rank, barrier
 from mlperf_logging.mllog import constants
 import mlperf_log_utils
+from mlperf_log_utils import mpiwrapper
 import horovod.torch as hvd
 import deepspeed
 
@@ -162,7 +163,7 @@ def add_parser_arguments(parser):
 def main(args):
     get_logs=args.get_logs
     if args.horovod:
-        hvd.init()
+        hvd.init(mpiwrapper.get_comm())
         args.local_rank = hvd.local_rank()
     elif args.deepspeed:
         deepspeed.init_distributed(dist_backend='nccl', init_method='env://')
@@ -351,6 +352,8 @@ def main(args):
             #    scaled_loss.backward()
         else:
             dloss.backward()
+        if hvd.is_initialized():
+            optimizer.synchronize()
 
     del dummy_model_and_loss
 

@@ -12,9 +12,9 @@ dataset_dir=/dockerx/data/dlrm/binary_dataset
 gpus_per_node=8
 test_batch_size=131072
 train_batch_size=32768
-mlperf_log="dlrm-`date +%s000`.log"
-use_emb_comp=False
 config_file=none
+opt+="--cache_eval_data"
+use_emb_comp=True
 
 while true; do
   case "$1" in
@@ -141,6 +141,8 @@ else
   export MLPERF_CACHE_CLEAR=0
 fi
 
+CURRENTDATE=`date +"%Y-%m-%d-%T" | sed -e "s/:/-/g"`
+mlperf_log="dlrm-${CURRENTDATE}-${train_batch_size}-${wsteps}-${dsteps}-${dsstep}-${lr}-${fp}.log"
 export MLPERF_LOG_FILE=$mlperf_log
 
 python3 -u -m mlperf_utils.bind_launch \

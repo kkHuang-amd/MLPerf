@@ -1,3 +1,4 @@
 opencv-python==3.4.8.29
 yacs
 ujson
+orjson

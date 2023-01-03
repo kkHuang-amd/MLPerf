@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright (c) 2019-2021 NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2019-2022 NVIDIA CORPORATION. All rights reserved.
 # Copyright 2020 MLBenchmark Group. All rights reserved.
 
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -105,7 +105,7 @@ def create_pretraining_dataset(input_file, max_pred_length, shared_list, args, w
     if synthetic_input: # synthetic, in-memory dataset only for performance testing
         train_data = synthetic_dataset(input_file=input_file, max_pred_length=max_pred_length, max_seq_length=args.max_seq_length)
     else:
-        train_data = pretraining_dataset(input_file=input_file, max_pred_length=max_pred_length, max_seq_length=args.max_seq_length)
+        train_data = pretraining_dataset(input_file=input_file, max_pred_length=max_pred_length, max_seq_length=args.max_seq_length, packed_samples=args.packed_samples)
 
     train_sampler = RandomSampler(train_data)
     train_dataloader = DataLoader(train_data, sampler=train_sampler,
@@ -138,7 +138,6 @@ def create_eval_dataset(args, worker_init_fn):
         else:
             eval_data = eval_data[chunk_size*rank+remainder : chunk_size*(rank+1)+remainder]
 
-    
     eval_sampler = SequentialSampler(eval_data)
     eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size,
                                          num_workers=0 if min(chunk_size, args.eval_batch_size)<=10 else 4, worker_init_fn=worker_init_fn, pin_memory=True)
@@ -146,14 +145,20 @@ def create_eval_dataset(args, worker_init_fn):
     return eval_dataloader
 
 class pretraining_dataset(Dataset):
-    def __init__(self, input_file, max_pred_length, max_seq_length):
-        # print(f"Initializing real data iterator from {input_file} real samples")
+    def __init__(self, input_file, max_pred_length, max_seq_length, packed_samples=False):
         self.input_file = input_file
         self.max_pred_length = max_pred_length
         self.max_seq_length = max_seq_length
+        self.packed_samples = packed_samples
+
         f = h5py.File(input_file, "r")
-        keys = ['input_ids', 'segment_ids', 'masked_lm_positions', 'masked_lm_ids',
-                'next_sentence_labels']
+        if not self.packed_samples:
+            keys = ['input_ids', 'segment_ids', 'masked_lm_positions', 'masked_lm_ids',
+                    'next_sentence_labels']
+        else:
+            keys = ['input_ids', 'segment_ids', 'masked_lm_positions', 'masked_lm_ids',
+                'packed_input_len', 'packed_masked_lm_len', 'next_sentence_labels', ]
+
         self.inputs = [np.asarray(f[key][:]) for key in keys]
         f.close()
 
@@ -165,26 +170,40 @@ class pretraining_dataset(Dataset):
         input_ids = np.zeros((self.max_seq_length)).astype(np.int64)
         input_mask= np.zeros((self.max_seq_length)).astype(np.int64)
         segment_ids=np.zeros((self.max_seq_length)).astype(np.int64)
-        # masked_lm_ids=np.zeros((self.max_pred_length)).astype(np.int64)
-        # masked_lm_positions=np.zeros((self.max_pred_length)).astype(np.int64)
-        next_sentence_labels=np.zeros(1).astype(np.int64)
-        [_input_ids, _segment_ids, _masked_lm_positions, _masked_lm_ids, _next_sentence_labels] = [
-            input[index].astype(np.int64) if indice < 4 else 
-            np.asarray(input[index].astype(np.int64)) for indice, input in enumerate(self.inputs)]
+        next_sentence_labels=np.zeros((3)).astype(np.int64)
+        packed_input_len = np.zeros((3)).astype(np.int64)
+
+        if not self.packed_samples:
+            [_input_ids, _segment_ids, _masked_lm_positions, _masked_lm_ids, _next_sentence_labels] = [
+                input[index].astype(np.int64) if indice < 4 else 
+                np.asarray(input[index].astype(np.int64)) for indice, input in enumerate(self.inputs)]
+        else:
+            [_input_ids, _segment_ids, _masked_lm_positions, _masked_lm_ids, _packed_input_len, _packed_masked_lm_len, _next_sentence_labels] = [
+                input[index].astype(np.int64) for indice, input in enumerate(self.inputs)]
         
         input_mask_len = _input_ids.shape[-1]
         input_ids[:input_mask_len] = _input_ids
-        input_mask[:input_mask_len] = np.ones((1,input_mask_len)).astype(np.int64)
+        input_mask[:input_mask_len] = np.ones((1,input_mask_len)).astype(np.int64)        
         segment_ids[:input_mask_len] = _segment_ids
         masked_lm_labels = np.zeros(input_ids.shape, dtype=np.int64)
         masked_lm_labels[ _masked_lm_positions] = _masked_lm_ids
-        next_sentence_labels = _next_sentence_labels
-        return [torch.from_numpy(input_ids), torch.from_numpy(segment_ids),
-                torch.from_numpy(input_mask), torch.from_numpy(masked_lm_labels), torch.from_numpy(next_sentence_labels)]
+
+        if not self.packed_samples:
+            next_sentence_labels = _next_sentence_labels
+
+            return [torch.from_numpy(input_ids), torch.from_numpy(segment_ids),
+                    torch.from_numpy(input_mask), torch.from_numpy(masked_lm_labels), torch.from_numpy(next_sentence_labels)]
+        else:
+            packed_seqs = _packed_input_len.shape[-1]
+            next_sentence_labels[:packed_seqs] = _next_sentence_labels
+            packed_input_len[:packed_seqs] = _packed_input_len
+
+            return [torch.from_numpy(input_ids), torch.from_numpy(segment_ids),
+                    torch.from_numpy(input_mask), torch.from_numpy(masked_lm_labels), torch.from_numpy(next_sentence_labels),
+                    torch.from_numpy(packed_input_len)]
 
 class synthetic_dataset(Dataset):
     def __init__(self, input_file, max_pred_length, max_seq_length, number_of_samples=100):
-        # print(f"Initializing synthetic data iterator with {number_of_samples} samples")
         self.max_pred_length = max_pred_length
         self.max_seq_length = max_seq_length
         self.samples = []
@@ -222,6 +241,24 @@ def parse_arguments():
                         type=str,
                         required=True,
                         help="The input data dir. Should contain .hdf5 files  for the task.")
+
+    parser.add_argument("--packed_samples",
+                        default=False,
+                        action="store_true",
+                        required=False,
+                        help="Indicate whether the samples in .hdf5 files contain packed sequences")
+
+    parser.add_argument("--max_pack_factor",
+                        default=3,
+                        type=int,
+                        required=False,
+                        help="Upto how many sequences can be packed within a sample.")
+
+    parser.add_argument("--average_packing_rate",
+                        default=2,
+                        type=int,
+                        required=False,
+                        help="Average number of sequences per batch.")
 
     parser.add_argument("--synthetic_input",
                         default=False,
@@ -531,7 +568,7 @@ def parse_arguments():
                         help='distributed weight update group size. If arg is 0, defaults to one node')
     parser.add_argument('--dwu-num-blocks',
                         '--dwunb',
-                        default=4,
+                        default=1,
                         type=int,
                         metavar='DWUNB',
                         help='number of blocks in dwu scheme')
@@ -575,6 +612,17 @@ def parse_arguments():
 
     assert not (args.init_checkpoint is not None and args.init_tf_checkpoint is not None), \
             "Can only specify one of --init_checkpoint and --init_tf_checkpoint"
+
+    assert not (args.exchange_padding and args.packed_samples), \
+        "Cannot balance batch load (exchange_padding) in case samples are packed"
+    
+    assert args.dwu_overlap_reductions or (args.dwu_num_blocks==1 and args.dwu_num_chunks==1), \
+        "With overlap reductions turned off, dwu_num_chunks and dwu_num_blocks should be set to 1"
+
+    # if not using packed dataset, we have only one sequence per sample
+    if not args.packed_samples:
+        args.max_pack_factor = 1
+        args.average_packing_rate = 1
 
     return args
 
@@ -728,7 +776,7 @@ def prepare_model_and_optimizer(args, device, stream):
     if config.fuse_mask == True: config.apex_softmax = True
     if config.pad == False: config.enable_stream = True
     if config.unpad == True: config.fused_mha = False
-    config.fp16 = args.fp16
+    config.packed_samples = args.packed_samples
 
     # Padding for divisibility by 8
     if config.vocab_size % 8 != 0:
@@ -757,10 +805,9 @@ def prepare_model_and_optimizer(args, device, stream):
         else:
             checkpoint=torch.load(args.init_checkpoint, map_location="cpu")["model"]
 
-        # not need for v1.0
-        # #Log weight initializations
-        # for weight in utils.convert_weight_names(list(checkpoint.keys())):
-        #     mlperf_logger.log_event(mlperf_logger.constants.WEIGHTS_INITIALIZATION, metadata={'tensor': weight})
+        #Log weight initializations
+        for weight in utils.convert_weight_names(list(checkpoint.keys())):
+            mlperf_logger.log_event(mlperf_logger.constants.WEIGHTS_INITIALIZATION, metadata={'tensor': weight})
 
         # Fused MHA requires a remapping of checkpoint parameters
         if config.fused_mha:
@@ -872,59 +919,44 @@ def prepare_model_and_optimizer(args, device, stream):
                 param.data.copy_(saved_param.data)
     stream.wait_stream(torch.cuda.current_stream())
     with torch.cuda.stream(stream):  
-        batch_gpu_placeholder = preprocess_batch(args,
-                torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
-                torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
-                torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
-                torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
-                torch.ones(args.train_batch_size, dtype=torch.int64, device=device),
-                )
-        p_names=[]
-        l1=optimizer_grouped_parameters_names[0]['params']
-        l2=optimizer_grouped_parameters_names[1]['params']
-        for n in l1:
-            p_names.append(n)
-        for n in l2:
-            p_names.append(n)
-       
-        ##Comment the following if condition when distributed_lamb is working fine. 
-        ##This is added to allow using vanilla fused lamb, as vanilla fused lamb doesnt have arg
-        ##optimizer._new_params and errors out with Attribute Error
-        #if args.distributed_lamb:
-        #    p_offset=0
-        #    prev=None
-        #    param_storage = optimizer._new_params.storage()
-        #    buffer_w_offsets=[]
-        #    buffer_b_offsets=[]
-        #    for i, p in enumerate(optimizer._model_params):
-        #        p_param_size = p.numel()
-        #        if 'self.Wq' in p_names[i]:
-        #            buffer_w_offsets.append(p_offset)
-        #        if 'self.Bq' in p_names[i]:
-        #            buffer_b_offsets.append(p_offset)
-        #        #if 'self.Wq' in p_names[i] or 'self.Wk' in p_names[i] or 'self.Wv' in p_names[i] or 'self.Bq' in p_names[i] or 'self.Bk' in p_names[i] or 'self.Bv' in p_names[i]  :
-        #        #    continue
-        #        with torch.no_grad():
-        #            p.set_(source=param_storage, storage_offset=p_offset, size=p.size())
-        #        p_offset += p_param_size
-        #        if prev is not None and (prev.data_ptr() + prev.numel() * prev.element_size() != p.data_ptr()):
-        #            p_offset = ((p_offset + 63) // 64) * 64
-        #        prev = p
 
-        #    ###Commenting it out as it errors wo FMHA
-        #    ###TODO Uncomment if condition after FMHA is enabled
-        #    if config.unpad_fmha:
-        #        for i in range(24):
-        #            size_tmp = model.bert_model_segment.bert.encoder.layer[i].attention.self.Wqkv.size()
-        #            model.bert_model_segment.bert.encoder.layer[i].attention.self.Wqkv.set_(source=param_storage, storage_offset=buffer_w_offsets[i], size=size_tmp)
-        #            size_tmp = model.bert_model_segment.bert.encoder.layer[i].attention.self.Bqkv.size()
-        #            model.bert_model_segment.bert.encoder.layer[i].attention.self.Bqkv.set_(source=param_storage, storage_offset=buffer_b_offsets[i], size=size_tmp)
+        # the following optimization makes sure parameters are laid out in a flat buffer to avoid flatten/unflatten copies for optimizer
+        # this is not tested for non-FMHA codepath, so only enabling for FMHA codepath
+        if (args.pad_fmha or args.unpad_fmha):
+            p_names=[]
+            l1=optimizer_grouped_parameters_names[0]['params']
+            l2=optimizer_grouped_parameters_names[1]['params']
+            for n in l1:
+                p_names.append(n)
+            for n in l2:
+                p_names.append(n)
+    
+            p_offset=0
+            prev=None
+            param_storage = optimizer._new_params.storage()
+            buffer_w_offsets=[]
+            buffer_b_offsets=[]
+            for i, p in enumerate(optimizer._model_params):
+                p_param_size = p.numel()
+                if 'self.Wq' in p_names[i]:
+                    buffer_w_offsets.append(p_offset)
+                if 'self.Bq' in p_names[i]:
+                    buffer_b_offsets.append(p_offset)
+                #if 'self.Wq' in p_names[i] or 'self.Wk' in p_names[i] or 'self.Wv' in p_names[i] or 'self.Bq' in p_names[i] or 'self.Bk' in p_names[i] or 'self.Bv' in p_names[i]  :
+                #    continue
+                with torch.no_grad():
+                    p.set_(source=param_storage, storage_offset=p_offset, size=p.size())
+                p_offset += p_param_size
+                if prev is not None and (prev.data_ptr() + prev.numel() * prev.element_size() != p.data_ptr()):
+                    p_offset = ((p_offset + 63) // 64) * 64
+                prev = p
+            for i in range(24):
+                size_tmp = model.bert_model_segment.bert.encoder.layer[i].attention.self.Wqkv.size()
+                model.bert_model_segment.bert.encoder.layer[i].attention.self.Wqkv.set_(source=param_storage, storage_offset=buffer_w_offsets[i], size=size_tmp)
+                size_tmp = model.bert_model_segment.bert.encoder.layer[i].attention.self.Bqkv.size()
+                model.bert_model_segment.bert.encoder.layer[i].attention.self.Bqkv.set_(source=param_storage, storage_offset=buffer_b_offsets[i], size=size_tmp)
         model.load_state_dict(checkpoint_remapped, strict=True)
-#        loss, _, _ = model(*batch_gpu_placeholder)
-#        optimizer._lazy_init_stage1()
-#        grad_scaler.scale(loss).backward()
-#        optimizer._lazy_init_stage2()
-#        optimizer.zero_grad()
+
     if args.deepspeed:
         model, optimizer, _, lr_scheduler = deepspeed.initialize(args=args, model=model, optimizer=optimizer, model_parameters=model.named_parameters(), lr_scheduler=lr_scheduler)
     return model, optimizer, lr_scheduler, checkpoint, global_step        
@@ -1253,8 +1285,10 @@ def main():
         loss, _, _ = model(input_ids=dummy_data[0], token_type_ids=dummy_data[1], attention_mask=dummy_data[2], masked_lm_labels=dummy_data[4], next_sentence_label=dummy_data[5])
         grad_scaler.scale(loss).backward()
         optimizer.complete_reductions()
-
-    samples_trained = global_step * args.train_batch_size * args.gradient_accumulation_steps * args.n_gpu
+    
+    current_device = torch.device('cuda', torch.cuda.current_device())
+    samples_trained = torch.zeros((1,), dtype=torch.int, device=current_device) # global_step * args.train_batch_size * args.gradient_accumulation_steps * args.n_gpu
+    global_samples_trained = torch.zeros((1,), dtype=torch.int, device=current_device) 
 
     if args.unpad:
         assert not args.use_cuda_graph, "code path not tested with cuda graphs"
@@ -1277,7 +1311,7 @@ def main():
         samples_trained_prev = 0
 
         # pre-compute eval boundaries
-        samples_trained_per_step = args.train_batch_size * args.gradient_accumulation_steps * args.n_gpu
+        samples_trained_per_step = args.train_batch_size * args.gradient_accumulation_steps * args.n_gpu * args.average_packing_rate
         start, stop, step = args.eval_iter_start_samples, args.max_samples_termination, args.eval_iter_samples
         eval_steps = [math.ceil(i/samples_trained_per_step) for i in np.arange(start, stop, step)]
         eval_count = 0
@@ -1297,7 +1331,7 @@ def main():
             num_files = len(files)
         else:
             files = [os.path.join(args.input_dir, f) for f in os.listdir(args.input_dir) if
-                     os.path.isfile(os.path.join(args.input_dir, f)) and 'part' in f]
+                     os.path.isfile(os.path.join(args.input_dir, f)) and 'part_' in f]
             files.sort()
             num_files = len(files)
             random.Random(shuffling_seeds[epoch]).shuffle(files)
@@ -1320,27 +1354,63 @@ def main():
                 "DDP type must be set to 'native' for --use_gradient_as_bucket_view"
 
         global skipped_steps
+        skipped_steps = torch.zeros((1,), dtype=torch.int, device=current_device)
+        skipped_samples = torch.zeros((1,), dtype=torch.int, device=current_device)
+        actual_batch = torch.zeros((1,), dtype=torch.int, device=current_device)
 
-        batch_gpu_placeholder = preprocess_batch(args,
-                torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
-                torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
-                torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
-                torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
-                torch.ones(args.train_batch_size, dtype=torch.int64, device=device),
-                )
+        graphs={} #dictionary that holds palceholder and graphs for particular number of sequences in a batch
+        if not args.packed_samples : # only a single graph/placeholder
+            batch_gpu_placeholder = preprocess_batch(args,
+                    torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
+                    torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
+                    torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
+                    torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
+                    torch.ones(args.train_batch_size, dtype=torch.int64, device=device),
+                    torch.ones(args.train_batch_size, dtype=torch.int64, device=device),
+                    )
+            graphs[args.train_batch_size] = {'graph':None, 'placeholder':batch_gpu_placeholder}        
+        else: # one graph/placeholder per sequnece count
+            for seq_count in range(args.train_batch_size,args.train_batch_size*args.max_pack_factor+1):
+                batch_gpu_placeholder = preprocess_batch(args,
+                    torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
+                    torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
+                    torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
+                    torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
+                    torch.ones(seq_count, dtype=torch.int64, device=device),
+                    torch.ones(seq_count, dtype=torch.int64, device=device),
+                    )
+                graphs[seq_count]={'graph': None, 'placeholder': batch_gpu_placeholder}
 
+
+        graphs_multi={}
         if use_cuda_graph and args.cuda_graph_mode=='full_iteration':
-            batch_gpu_placeholder_multi = [
+            if not args.packed_samples:
+                batch_gpu_placeholder_multi = [
+                            preprocess_batch(args,                 
+                            torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
+                            torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
+                            torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
+                            torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
+                            torch.ones(args.train_batch_size, dtype=torch.int64, device=device),
+                            ) for _ in range(args.max_iterations_per_graph)]
+                graphs_multi[args.train_batch_size] = {'graph': None, 'placeholder': batch_gpu_placeholder_multi}
+            else:
+                for seq_count in range(args.train_batch_size,args.train_batch_size*args.max_pack_factor+1):
+                    batch_gpu_placeholder_multi = [
                         preprocess_batch(args,                 
                         torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
                         torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
                         torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
                         torch.ones(args.train_batch_size, args.max_seq_length, dtype=torch.int64, device=device),
-                        torch.ones(args.train_batch_size, dtype=torch.int64, device=device),
+                        torch.ones(seq_count, dtype=torch.int64, device=device),
+                        torch.ones(seq_count, dtype=torch.int64, device=device),
                         ) for _ in range(args.max_iterations_per_graph)]
+                    graphs_multi[seq_count]={'graph': None, 'placeholder': batch_gpu_placeholder_multi}
 
             eval_batch = get_eval_batchsize_per_worker(args)
+            #eval_batch = 16 #get_eval_batchsize_per_worker(args)
 
+            #print(f"eval_batch: {eval_batch}")
             batch_gpu_placeholder_eval = preprocess_batch(                    
                     args,
                     torch.ones(eval_batch, args.max_seq_length, dtype=torch.int64, device=device),
@@ -1353,7 +1423,7 @@ def main():
             fwd_loss_bwd_trainer = FwdLossBwdTrainer(args, grad_scaler)
             model = fwd_loss_bwd_trainer.capture_bert_model_segment_graph(model, use_cuda_graph)
             current_device = torch.device('cuda', torch.cuda.current_device())
-            skipped_steps = torch.zeros((1,), dtype=torch.int, device=current_device)
+            # skipped_steps = torch.zeros((1,), dtype=torch.int, device=current_device)
 
         if use_DDP and not args.distributed_lamb:
             if args.ddp_type == 'native':
@@ -1372,34 +1442,40 @@ def main():
             flat_dist_call([param.data for param in model.parameters()], dist.broadcast, (0,) )
             if args.cuda_graph_mode=='segmented' or not use_cuda_graph:
                 loss, mlm_acc, _ = fwd_loss_bwd_trainer.step(-1,
-                                                              batch_gpu_placeholder,
+                                                              graphs[args.train_batch_size]['placeholder'],
                                                               model,
                                                               optimizer)
                 optimizer.zero_grad()    
                 overflow_buf = None
                 if args.allreduce_post_accumulation:
                     overflow_buf = torch.cuda.IntTensor([0])
-                ##As fused lamb doesnt have optimizer.set_global_scale attribute
-                ##Adding the following if condition
-                if args.distributed_lamb:
-                    optimizer.set_global_scale(grad_scaler._get_scale_async())
-                    optimizer.complete_reductions()
-                    grad_scaler.step(optimizer)
-                    grad_scaler.update()
-                    found_inf = optimizer._overflow_buf # GPU tensor
-                skipped_steps = torch.zeros((1,), dtype=torch.int, device=current_device)
+                optimizer.set_global_scale(grad_scaler._get_scale_async())
+                optimizer.complete_reductions()
+                grad_scaler.step(optimizer)
+                grad_scaler.update()
+                found_inf = optimizer._overflow_buf # GPU tensor
+                # skipped_steps = torch.zeros((1,), dtype=torch.int, device=current_device)
             else:
                 current_device = torch.device('cuda', torch.cuda.current_device())
+                ambient_stream = torch.cuda.current_stream()
                 capture_stream = torch.cuda.Stream()
-                capture_stream.wait_stream(torch.cuda.current_stream())
+                capture_stream.wait_stream(ambient_stream)
                 loss_train = torch.zeros((1,), dtype=torch.float, device=current_device)
-                with torch.cuda.stream(capture_stream): 
+                from model.layers.activations import fast_gelu_impl
+                with torch.cuda.stream(capture_stream):  
                     #do a warmup
-                    for i in range(3):
-                        loss, _, _ = model(*batch_gpu_placeholder)
-                        optimizer._lazy_init_stage1()
-                        grad_scaler.scale(loss).backward()
-                    loss, _, _ = model(*batch_gpu_placeholder)
+                    # for i in range(3):
+                    #     loss, _, _ = model(*graphs[args.train_batch_size]['placeholder'])
+                    #     optimizer._lazy_init_stage1()
+                    #     grad_scaler.scale(loss).backward()
+                    if args.fused_gemm_gelu:
+                        for i in range(10):
+                            input_t = torch.ones(args.train_batch_size,512,1024).cuda().half()
+                            input_t.requires_grad=True
+                            output_t = fast_gelu_impl(input_t)
+                            doutput_t = torch.ones_like(output_t)
+                            output_t.backward(doutput_t)
+                    loss, _, _ = model(*graphs[args.train_batch_size]['placeholder'])
                     optimizer._lazy_init_stage1()
                     grad_scaler.scale(loss).backward()
                     optimizer._lazy_init_stage2()
@@ -1409,15 +1485,18 @@ def main():
                     grad_scaler.step(optimizer)
                     grad_scaler.update()
                     found_inf = optimizer._overflow_buf # GPU tensor
-                    # skipped_steps += found_inf
-                    skipped_steps = torch.zeros((1,), dtype=torch.int, device=current_device)
+                    skipped_steps += found_inf
                     #below is for graph capture
                     capture_stream.synchronize()
-                    graph = torch.cuda.CUDAGraph()
-                    optimizer.zero_grad(set_to_none=True)
-                    if use_cuda_graph:                    
+                capture_stream.wait_stream(ambient_stream)
+                    # graph = torch.cuda.CUDAGraph()
+                if use_cuda_graph :#and ( args.max_iterations_per_graph == 1 ): 
+                    for seq_count in range(args.train_batch_size, args.train_batch_size*args.max_pack_factor+1):                   
+                        graph = torch.cuda.CUDAGraph()
+                        optimizer.zero_grad(set_to_none=True)
                         with torch.cuda.graph(graph):
-                            loss, mlm_acc, _ = model(*batch_gpu_placeholder)
+                            loss, mlm_acc, _ = model(*(graphs[seq_count]['placeholder']))
+                            samples_trained += graphs[seq_count]['placeholder'][-2].shape[0]
                             loss_train.copy_(loss)
                             optimizer._lazy_init_stage1()
                             grad_scaler.scale(loss).backward()
@@ -1431,18 +1510,24 @@ def main():
                             static_scale.copy_(grad_scaler._scale)
                             found_inf = optimizer._overflow_buf # GPU tensor
                             skipped_steps += found_inf
-                    capture_stream.synchronize()
-                    graph_multi = torch.cuda.CUDAGraph()
-                    if use_cuda_graph:
-                        grad_scaler.update(new_scale=static_scale)
+                            skipped_samples += found_inf*graphs[seq_count]['placeholder'][-2].shape[0] #current_samples
+                        #capture_stream.synchronize()
+                        #capture_stream.wait_stream(ambient_stream)
+                        graphs[seq_count]['graph'] = graph
+                    # graph_multi = torch.cuda.CUDAGraph()
+                #    if use_cuda_graph and ( args.max_iterations_per_graph > 1 ):
+                    grad_scaler.update(new_scale=static_scale)
+                    for seq_count in range(args.train_batch_size, args.train_batch_size*args.max_pack_factor+1): 
+                        graph_multi = torch.cuda.CUDAGraph()
                         with torch.cuda.graph(graph_multi):
                             for i in range(args.max_iterations_per_graph):
                                 optimizer.zero_grad(set_to_none=True)
-                                loss, mlm_acc, _ = model(*batch_gpu_placeholder_multi[i])
+                                loss, mlm_acc, _ = model(*(graphs_multi[seq_count]['placeholder'][i]))
+                                samples_trained += graphs_multi[seq_count]['placeholder'][i][-2].shape[0]
                                 optimizer._lazy_init_stage1()
                                 grad_scaler.scale(loss).backward()
                                 optimizer._lazy_init_stage2()
-                                #static_scale = grad_scaler._scale
+                                # static_scale = grad_scaler._scale
                                 lr_scheduler.step()
                                 optimizer.set_global_scale(grad_scaler._get_scale_async())
                                 optimizer.complete_reductions()
@@ -1451,12 +1536,16 @@ def main():
                                 #static_scale.copy_(grad_scaler._scale)
                                 found_inf = optimizer._overflow_buf # GPU tensor
                                 skipped_steps += found_inf
+                                skipped_samples += found_inf*graphs_multi[seq_count]['placeholder'][i][-2].shape[0] #current_samples
                             static_scale.copy_(grad_scaler._scale)
-                    capture_stream.synchronize()
+                        # capture_stream.synchronize()
+                        graphs_multi[seq_count]['graph'] = graph_multi
+                    # Capture evaluation graph
                     graph_eval = torch.cuda.CUDAGraph()
                     mlm_accuracy_eval = torch.zeros((1,), dtype=torch.float, device=current_device)
                     loss_eval = torch.zeros((1,), dtype=torch.float, device=current_device)
                     num_valid_eval = torch.zeros((1,), dtype=torch.int64, device=current_device)
+                    torch.cuda.synchronize()
                     if use_cuda_graph:
                         model.eval()
                         # run a warmup iteration for JIT kernels
@@ -1501,9 +1590,8 @@ def main():
         sbridge = init_bridge(dist.get_rank())
 
         while global_step < args.max_steps and not end_training:
-            samples_trained = global_step * args.train_batch_size * args.gradient_accumulation_steps * args.n_gpu
             mlperf_logger.log_start(key=mlperf_logger.constants.EPOCH_START,
-                                    metadata={'epoch_num': samples_trained}, sync=False)
+                                    metadata={'epoch_num': global_samples_trained.item()}, sync=False)
             mlperf_logger.log_start(key=mlperf_logger.constants.BLOCK_START,
                                     metadata={'first_epoch_num': epoch,
                                               'epoch_count': 1},
@@ -1517,7 +1605,6 @@ def main():
 
                 print("epoch:", epoch)
 
-            thread = None
 
             # Reshuffle file list on subsequent epochs
             if not first_epoch:
@@ -1540,12 +1627,11 @@ def main():
             else:
                 data_file = files[(f_start_id*dist.get_world_size() + dist.get_rank()) % num_files]
 
-            previous_file = data_file
-
+            mlperf_logger.log_event(key='data_file', value=data_file, sync=False)
             if args.synthetic_input:
                 train_data = synthetic_dataset(data_file, args.max_predictions_per_seq, args.max_seq_length)
             else:
-                train_data = pretraining_dataset(data_file, args.max_predictions_per_seq, args.max_seq_length)
+                train_data = pretraining_dataset(data_file, args.max_predictions_per_seq, args.max_seq_length, args.packed_samples)
 
             train_sampler = RandomSampler(train_data)
             train_dataloader = DataLoader(train_data, sampler=train_sampler,
@@ -1570,7 +1656,6 @@ def main():
                 else:
                     data_file = files[(f_id*dist.get_world_size() + dist.get_rank())%num_files]
 
-                previous_file = data_file
                 if need_next_training_shard:
                     dataset_future = pool.submit(create_pretraining_dataset, data_file, args.max_predictions_per_seq, shared_file_list, args, worker_init_fn=worker_init, synthetic_input=args.synthetic_input)
 
@@ -1582,6 +1667,9 @@ def main():
                 #torch.cuda.cudart().cudaProfilerStart()
                 for step, batch in enumerate(train_dataloader):
                     batch = preprocess_batch(args, *batch)
+                    actual_batch = batch[-2].shape[0]                    
+                    #assert actual_batch >= args.train_batch_size, "Batch underflow"
+                    # samples_trained += actual_batch
                     training_steps += 1
 
                     accumulated_batches += 1
@@ -1589,12 +1677,6 @@ def main():
 
                     if accumulated_batches == 1 and not args.distributed_lamb: # distributed_lamb zeros gradinetss in a forward hook
                         optimizer.zero_grad()
-
-                    # if accumulated_batches == 1 and args.gradient_accumulation_steps > 1:
-                    #     if args.distributed_lamb:
-                    #         optimizer.zero_grad(set_to_none=True)
-                    #     else:
-                    #         optimizer.zero_grad()
 
                     if args.distributed_lamb:
                         optimizer.set_is_accumulation_step(not update_step)
@@ -1611,7 +1693,7 @@ def main():
                         #is sufficiently far in terms of number of steps
                         sbridge.start_prof(SBridge.FWD_BWD_TIME)
                         if forming_multi_iter_batch:
-                            for t,t_gpu in zip(batch, batch_gpu_placeholder_multi[samples_in_multi_iter_batch]):
+                            for t,t_gpu in zip(batch, graphs_multi[actual_batch]['placeholder'][samples_in_multi_iter_batch]):
                                 t_gpu.copy_(t, non_blocking=True)
                             samples_in_multi_iter_batch += 1
                             if samples_in_multi_iter_batch<args.max_iterations_per_graph:
@@ -1620,20 +1702,21 @@ def main():
                                 samples_in_multi_iter_batch=0
                                 forming_multi_iter_batch = False
                                 #torch.cuda.synchronize()
-                                graph_multi.replay()
+                                # graph_multi.replay()
+                                graphs_multi[actual_batch]['graph'].replay()
                                 global_step += args.max_iterations_per_graph
                         else:
                             if args.max_iterations_per_graph>1 and next_eval_step-global_step>=args.max_iterations_per_graph and args.max_steps-global_step>=args.max_iterations_per_graph:
                                 forming_multi_iter_batch = True
-                                for t,t_gpu in zip(batch, batch_gpu_placeholder_multi[0]):
+                                for t,t_gpu in zip(batch, graphs_multi[actual_batch]['placeholder'][0]):
                                     t_gpu.copy_(t, non_blocking=True)
                                 samples_in_multi_iter_batch = 1
                                 continue
                             else:
-                                for t,t_gpu in zip(batch, batch_gpu_placeholder):
+                                for t,t_gpu in zip(batch, graphs[actual_batch]['placeholder']):
                                     t_gpu.copy_(t, non_blocking=True)
-                                #torch.cuda.synchronize()
-                                graph.replay()
+                                torch.cuda.synchronize()
+                                graphs[actual_batch]['graph'].replay()
                                 global_step +=1
                         loss = loss_train
                         sbridge.stop_prof(SBridge.FWD_BWD_TIME)
@@ -1644,6 +1727,7 @@ def main():
                                                                   model,
                                                                   optimizer,
                                                                   sbridge)
+                        samples_trained += actual_batch
                     divisor = args.gradient_accumulation_steps
                     if args.log_freq>0:
                         average_loss += loss.item()
@@ -1678,12 +1762,15 @@ def main():
                                 global_step -= skip_interval
                                 now_skipped += skip_interval
                                 skipped_steps.zero_()
+                                samples_trained -= skipped_samples
+                                skipped_samples.zero_()
                             else:
                                 # on first eval, get eval_dataloader
                                 if eval_count == 0:
                                    eval_dataloader = eval_dataset_future.result(timeout=None)
 
-                                samples_trained = global_step * args.train_batch_size * args.gradient_accumulation_steps * args.n_gpu
+                                global_samples_trained = samples_trained.detach().clone()
+                                dist.all_reduce(global_samples_trained, op=dist.ReduceOp.SUM)
                                 samples_trained_prev = samples_trained
                                 if args.cuda_graph_mode=='segmented' or not use_cuda_graph:
                                     eval_avg_loss, eval_avg_mlm_accuracy = run_eval(args, model, fwd_loss_bwd_trainer, eval_dataloader, device, args.num_eval_examples,
@@ -1691,7 +1778,7 @@ def main():
                                 else:
                                     eval_avg_loss, eval_avg_mlm_accuracy = run_graphed_eval(args, graph_eval, batch_gpu_placeholder_eval, eval_dataloader, loss_eval, mlm_accuracy_eval, num_valid_eval, first_eval=(eval_count == 0))
                                 if utils.is_main_process():
-                                    mlperf_logger.log_event(key=mlperf_logger.constants.EVAL_ACCURACY, value=eval_avg_mlm_accuracy, metadata={'epoch_num': samples_trained}, sync=False)
+                                    mlperf_logger.log_event(key=mlperf_logger.constants.EVAL_ACCURACY, value=eval_avg_mlm_accuracy, metadata={'epoch_num': global_samples_trained.item()}, sync=False)
                                     print({"global_steps": global_step, "eval_loss": eval_avg_loss, "eval_mlm_accuracy":eval_avg_mlm_accuracy})
 
                                 if args.target_mlm_accuracy:
@@ -1715,7 +1802,6 @@ def main():
                             avg_mlm_accuracy /= dist.get_world_size()
 
                     if args.log_freq > 0 and training_steps % (args.log_freq * args.gradient_accumulation_steps) == 0:
-                        samples_trained = global_step * args.train_batch_size * args.gradient_accumulation_steps * args.n_gpu
                         if utils.is_main_process():
                             time_interval = time.time() - now_time
                             step_interval = global_step - now_step
@@ -1732,7 +1818,7 @@ def main():
                                       "learning_rate": now_lr,
                                       "seq/s": training_perf,
                                       "global_steps": now_step,
-                                      "samples_trained": samples_trained,
+                                      "samples_trained": global_samples_trained.item(),
                                       "skipped_steps": now_skipped,
                                       "timestamp": now_time,
                                       "mlm_accuracy": avg_mlm_accuracy[0].item()})
@@ -1743,7 +1829,7 @@ def main():
                                       "learning_rate": now_lr,
                                       "seq/s": training_perf,
                                       "global_steps": now_step,
-                                      "samples_trained": samples_trained,
+                                      "samples_trained": global_samples_trained.item(),
                                       "skipped_steps": now_skipped,
                                       "timestamp": now_time})
 
@@ -1788,9 +1874,9 @@ def main():
                             model_to_save = model.module if hasattr(model,
                                                                     'module') else model  # Only save the model it-self
                             if args.phase2:
-                                output_save_file = os.path.join(args.output_dir, "phase2_ckpt_{}.pt".format(samples_trained))
+                                output_save_file = os.path.join(args.output_dir, "phase2_ckpt_{}.pt".format(samples_trained.item()))
                             else:
-                                output_save_file = os.path.join(args.output_dir, "phase1_ckpt_{}.pt".format(samples_trained))
+                                output_save_file = os.path.join(args.output_dir, "phase1_ckpt_{}.pt".format(samples_trained.item()))
                             if args.do_train:
                                 torch.save({'model': model_to_save.state_dict(),
                                             'optimizer': optimizer.state_dict(),
@@ -1811,7 +1897,7 @@ def main():
                 del train_dataloader
                 #torch.cuda.cudart().cudaProfilerStop()
 
-                if samples_trained >= args.max_samples_termination or end_training:
+                if global_samples_trained >= args.max_samples_termination or end_training:
                     status = 'success' if converged else 'aborted'
                     end_training = True
                     break
@@ -1824,14 +1910,15 @@ def main():
                                   metadata={'first_epoch_num': epoch},
                                   sync=False)
             mlperf_logger.log_end(key=mlperf_logger.constants.EPOCH_STOP,
-                                  metadata={'epoch_num': samples_trained}, sync=False)
+                                  metadata={'epoch_num': global_samples_trained.item()}, sync=False)
 
             epoch += 1
 
             sbridge.stop_epoch_prof()
 
+        # torch.distributed.all_reduce(samples_trained, op=torch.distributed.ReduceOp.SUM)
         mlperf_logger.log_event(key=mlperf_logger.constants.TRAIN_SAMPLES,
-                                value=samples_trained,
+                                value=global_samples_trained.item(),
                                 sync=False)
         mlperf_logger.log_event(key=mlperf_logger.constants.EVAL_SAMPLES,
                                 value=args.num_eval_examples,
@@ -1841,16 +1928,16 @@ def main():
 
         pool.shutdown(wait=True)
         
-    return args, final_loss, train_time_raw, training_steps
+    return args, final_loss, train_time_raw
 
 def global_batch_size(args):
-    return args.train_batch_size * args.gradient_accumulation_steps * args.n_gpu
+    return args.train_batch_size * args.gradient_accumulation_steps * args.n_gpu * args.average_packing_rate
 
 if __name__ == "__main__":
     #torch.backends.cuda._stateful_ops.state_on_device = True
 
     now = time.time()
-    args, final_loss, train_time_raw, training_steps = main()
+    args, final_loss, train_time_raw = main()
 
     if args.deepspeed:
         import deepspeed.comm as dist
@@ -1863,7 +1950,7 @@ if __name__ == "__main__":
     if utils.is_main_process():
         e2e_time = time.time() - now
         training_perf = global_batch_size(args) \
-                        * (training_steps - args.resume_step + skipped_steps.item()) / train_time_raw
+                        * (args.max_steps - args.resume_step + skipped_steps.item()) / train_time_raw
         if args.do_train:
             print({"e2e_time": e2e_time, "training_sequences_per_second": training_perf,
                                              "final_loss": final_loss, "raw_train_time": train_time_raw })

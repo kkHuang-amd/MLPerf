@@ -12,6 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+set -e
 
 function usage()
 {
@@ -101,57 +102,42 @@ if (( SKIP==0 )) ; then
     
 fi
 
-### Create HDF5 files for training
-mkdir -p ${DATADIR}/hdf5/training
-${SCRIPT_DIR}/parallel_create_hdf5.sh -i ${DATADIR}/download/results4 -o ${DATADIR}/hdf5/training -v ${DATADIR}/phase1/vocab.txt
 
-### Chop HDF5 files into chunks
-python3 ${SCRIPT_DIR}/chop_hdf5_files.py \
- --num_shards ${SHARDS} \
- --input_hdf5_dir ${DATADIR}/hdf5/training \
- --output_hdf5_dir ${DATADIR}/hdf5/training-${SHARDS}
+mkdir -p ${DATADIR}/per_seqlen_parts
+for shard in `seq -w 00000 00499`; do
+    mkdir -p ${DATADIR}/per_seqlen_parts/part-${shard}
+done
 
-### Convert fixed length to variable length format
-mkdir -p ${DATADIR}/hdf5/training-${SHARDS}/hdf5_${SHARDS}_shards_varlength
-CPUS=$( ls -d /sys/devices/system/cpu/cpu[[:digit:]]* | wc -w )
-CPUS=$((CPUS / 2))
-ls -1 ${DATADIR}/hdf5/training-${SHARDS}/hdf5_${SHARDS}_shards_uncompressed | \
-  xargs --max-args=1 --max-procs=${CPUS} -I{} python3 ${SCRIPT_DIR}/convert_fixed2variable.py \
-  --input_hdf5_file ${DATADIR}/hdf5/training-${SHARDS}/hdf5_${SHARDS}_shards_uncompressed/{} \
-  --output_hdf5_file ${DATADIR}/hdf5/training-${SHARDS}/hdf5_${SHARDS}_shards_varlength/{}
+# Parallelize over $CPUS cores
+CPUS=64
+seq -w 00000 00499 | xargs --max-args=1 --max-procs=$CPUS -I{} python create_per_seqlength_data.py \
+    --input_file ${DATADIR}/download/results4/part-{}-of-00500 \
+    --output_file ${DATADIR}/per_seqlen_parts/part-{} \
+    --vocab_file ${DATADIR}/phase1/vocab.txt \
+    --do_lower_case=True \
+    --max_seq_length=512 \
+    --max_predictions_per_seq=76 \
+    --masked_lm_prob=0.15 \
+    --random_seed=12345 \
+    --dupe_factor=10
 
-### Create full HDF5 files for evaluation
-mkdir -p ${DATADIR}/hdf5/eval
-python3 ${SCRIPT_DIR}/create_pretraining_data.py \
- --input_file=${DATADIR}/download/results4/eval.txt \
- --output_file=${DATADIR}/hdf5/eval/eval_all \
- --vocab_file=${DATADIR}/phase1/vocab.txt \
- --do_lower_case=True \
- --max_seq_length=512 \
- --max_predictions_per_seq=76 \
- --masked_lm_prob=0.15 \
- --random_seed=12345 \
- --dupe_factor=10
+#Merge all results
+mkdir -p ${DATADIR}/per_seqlen
+seq 0 511 | xargs --max-args=1 --max-procs=$CPUS -I{} python ./gather_per_seqlength_data.py \
+    --input_hdf5 /workspace/bert_data/per_seqlen_parts \
+    --output_hdf5 /workspace/bert_data/per_seqlen \
+    --seq_length {}
 
-### pick 10k samples for evaluation
-python3 ${SCRIPT_DIR}/pick_eval_samples.py \
- --input_hdf5_file=${DATADIR}/hdf5/eval/eval_all.hdf5 \
- --output_hdf5_file=${DATADIR}/hdf5/eval/part_eval_10k \
- --num_examples_to_pick=10000
+#Generate sub-optimal packing strategy based on lenghts distribution of training set and store samples-based lists per shard
+python ./generate_packing_strategy.py \
+    --input_hdf5 /workspace/bert_data/per_seqlen \
+    --output_hdf5 /workspace/bert_data/packed_data \
+    --max_seq_length 512 \
+    --max_seq_per_sample 3 \
+    --shards_num ${SHARDS} 
 
-### Convert fixed length to variable length format
-mkdir -p ${DATADIR}/hdf5/eval_varlength
-python3 ${SCRIPT_DIR}/convert_fixed2variable.py --input_hdf5_file ${DATADIR}/hdf5/eval/part_eval_10k.hdf5 \
-  --output_hdf5_file ${DATADIR}/hdf5/eval_varlength/part_eval_10k.hdf5
-
-### Convert Tensorflow checkpoint to Pytorch one
-python3 ${SCRIPT_DIR}/../convert_tf_checkpoint.py \
-  --tf_checkpoint ${DATADIR}/phase1/model.ckpt-28252 \
-  --bert_config_path ${DATADIR}/phase1/bert_config.json \
-  --output_checkpoint ${DATADIR}/phase1/model.ckpt-28252.pt
-
-### Example of how to generate checksums to verify correctness of the process
-# for i in `seq -w 0000 04319`; do 
-#   python ${SCRIPT_DIR}/hdf5_md5.py \
-#     --input_hdf5 ${DATADIR}/hdf5/training-${SHARDS}/hdf5_${SHARDS}_shards_varlength/part_${i}_of_04320.hdf5 
-# done | tee 4320_shards_varlength.chk
+# Create training set shards based on generated lists
+python create_packed_trainset.py \
+    --input_hdf5 ${DATADIR}/per_seqlen \
+    --assignment_file ${DATADIR}/packed_data \
+    --output_hdf5 ${DATADIR}/packed_data

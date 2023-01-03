@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright (c) 2019-2022 NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2019-2021 NVIDIA CORPORATION. All rights reserved.
 # Copyright 2020 MLBenchmark Group. All rights reserved.
 
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,6 +24,8 @@ import collections
 import random
 import tokenization
 import tensorflow as tf
+import pickle
+from tqdm import tqdm
 
 import h5py
 import numpy as np
@@ -102,28 +104,28 @@ def write_instance_to_example_files(instances, tokenizer, max_seq_length,
   """Create TF example files from `TrainingInstance`s."""
   writers = []
   h5_writers = []
-  
-  expected_instances_per_file = len(instances) // len(output_files) + 500    # Over-allocation to avoid resizing 
-  for output_file in output_files:
+  inst_indices = [0]*max_seq_length
+  for seq_length in range(max_seq_length):
+    seq_count = len(instances)
     h5_writers.append({
-      'handle' : h5py.File(output_file + ".hdf5", 'w'),
-      'input_ids' : np.zeros([expected_instances_per_file, max_seq_length], dtype="int32"),
-      'input_mask' : np.zeros([expected_instances_per_file, max_seq_length], dtype="int32"),
-      'segment_ids' : np.zeros([expected_instances_per_file, max_seq_length], dtype="int32"),
-      'masked_lm_positions' : np.zeros([expected_instances_per_file, max_predictions_per_seq], dtype="int32"),
-      'masked_lm_ids' : np.zeros([expected_instances_per_file, max_predictions_per_seq], dtype="int32"),
-      'next_sentence_labels' : np.zeros(expected_instances_per_file, dtype="int32"),
+      'handle' : h5py.File('{}/seqlength_{:03d}.hdf5'.format(output_files[0], seq_length+1), 'w'),
+      'input_ids' : np.zeros([seq_count, max_seq_length], dtype="int32"),
+      'input_mask' : np.zeros([seq_count, max_seq_length], dtype="int32"),
+      'segment_ids' : np.zeros([seq_count, max_seq_length], dtype="int32"),
+      'masked_lm_positions' : np.zeros([seq_count, max_predictions_per_seq], dtype="int32"),
+      'masked_lm_ids' : np.zeros([seq_count, max_predictions_per_seq], dtype="int32"),
+      'next_sentence_labels' : np.zeros(seq_count, dtype="int32"),
       'len' : 0 })
 
-  writer_index = 0
+#   writer_index = 0
 
   total_written = 0
 
-  features_h5 = collections.OrderedDict()
-
-  for (inst_index, instance) in enumerate(instances):
+  for instance in tqdm(instances, total=len(instances)):
     input_ids = tokenizer.convert_tokens_to_ids(instance.tokens)
     input_mask = [1] * len(input_ids)
+    seq_length = sum(input_mask)-1
+    inst_index = inst_indices[seq_length]
     segment_ids = list(instance.segment_ids)
     assert len(input_ids) <= max_seq_length
 
@@ -147,22 +149,21 @@ def write_instance_to_example_files(instances, tokenizer, max_seq_length,
 
     next_sentence_label = 1 if instance.is_random_next else 0
     
-    h5_writers[writer_index]['input_ids'][inst_index] = input_ids
-    h5_writers[writer_index]['input_mask'][inst_index] = input_mask
-    h5_writers[writer_index]['segment_ids'][inst_index] = segment_ids
-    h5_writers[writer_index]['masked_lm_positions'][inst_index] = masked_lm_positions
-    h5_writers[writer_index]['masked_lm_ids'][inst_index] = masked_lm_ids
-    h5_writers[writer_index]['next_sentence_labels'][inst_index] = next_sentence_label
-    h5_writers[writer_index]['len'] += 1
+    h5_writers[seq_length]['input_ids'][inst_index] = input_ids
+    h5_writers[seq_length]['input_mask'][inst_index] = input_mask
+    h5_writers[seq_length]['segment_ids'][inst_index] = segment_ids
+    h5_writers[seq_length]['masked_lm_positions'][inst_index] = masked_lm_positions
+    h5_writers[seq_length]['masked_lm_ids'][inst_index] = masked_lm_ids
+    h5_writers[seq_length]['next_sentence_labels'][inst_index] = next_sentence_label
+    h5_writers[seq_length]['len'] += 1
 
-    writer_index = (writer_index + 1) % len(h5_writers)
-
+    inst_indices[seq_length] += 1
     total_written += 1
 
-    if inst_index < 20:
-      tf.compat.v1.logging.info("*** Example ***")
-      tf.compat.v1.logging.info("tokens: %s" % " ".join(
-          [tokenization.printable_text(x) for x in instance.tokens]))
+    # if inst_index < 20:
+    #   tf.compat.v1.logging.info("*** Example ***")
+    #   tf.compat.v1.logging.info("tokens: %s" % " ".join(
+    #       [tokenization.printable_text(x) for x in instance.tokens]))
   
   print("saving data")
   for h5_writer in h5_writers:

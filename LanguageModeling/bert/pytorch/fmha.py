@@ -1,4 +1,4 @@
-# Copyright (c) 2019-2021 NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2019-2022 NVIDIA CORPORATION. All rights reserved.
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ class FMHAFun(torch.autograd.Function):
         b = cu_seqlens.numel() - 1
 
         is_nl = False
-        set_zero = False
 
         if b < 4 and b > 1:
             max_s = 512
@@ -113,6 +112,7 @@ class FMHA(torch.nn.Module):
         self.hidden_size = config.hidden_size
         self.d = self.hidden_size // self.h
         self.fuse_bias = config.fused_bias_mha
+        self.set_zero = config.packed_samples # TODO read this from config
         assert self.d * self.h == self.hidden_size, "Invalid hidden size/num_heads"
 
         self.register_buffer("Wqkv",torch.zeros(3 * config.hidden_size, config.hidden_size))
@@ -211,6 +211,6 @@ class FMHA(torch.nn.Module):
             qkv = fused_dense.fused_dense_function(hidden_states, Wqkv, Bqkv)
         p_dropout = self.p_dropout
 
-        ctx = FMHAFun.apply(qkv.view(-1, 3, self.h, self.d), cu_seqlens, p_dropout, max_s, is_training)
+        ctx = FMHAFun.apply(qkv.view(-1, 3, self.h, self.d), cu_seqlens, p_dropout, max_s, is_training, self.set_zero)
 
         return ctx.view(-1, self.hidden_size)

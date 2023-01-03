@@ -1,4 +1,4 @@
-# Copyright (c) 2019-2021 NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2019-2022 NVIDIA CORPORATION. All rights reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -65,6 +65,7 @@ def prepare_model(args, device):
     config.fused_dropout_add = False
     config.fused_bias_fc = False
     config.fused_bias_fc_loss_head = False
+    config.fused_gemm_gelu = False
     if config.fuse_mask == True: config.apex_softmax = True
     if config.pad == False: config.enable_stream = True
     if config.unpad == True: config.fused_mha = False

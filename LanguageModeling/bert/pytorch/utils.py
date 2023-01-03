@@ -1,4 +1,4 @@
-# Copyright (c) 2019-2021 NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2019-2022 NVIDIA CORPORATION. All rights reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -24,6 +24,8 @@ def convert_weight_names(names):
     extra_params = {"cls/predictions/bias": "cls/predictions/output_bias",
                     "cls/seq_relationship/kernel": "cls/seq_relationship/output_weights",
                     "cls/seq_relationship/bias": "cls/seq_relationship/output_bias"}
+    duplications = ["cls/predictions/decoder/kernel", # this is the same as embeddings
+                    ]
     new_names = []
     for name in names:
 
@@ -35,7 +37,8 @@ def convert_weight_names(names):
                                                 "embeddings/kernel", "embeddings")
         if name in extra_params:
             name = extra_params[name]
-        new_names.append(name)
+        if name not in duplications:
+            new_names.append(name)
     return  new_names
 
 def generate_seeds(rng, size):

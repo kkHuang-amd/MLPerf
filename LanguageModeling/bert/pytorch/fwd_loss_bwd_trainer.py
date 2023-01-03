@@ -1,4 +1,4 @@
-# Copyright (c) 2019-2021 NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2019-2022 NVIDIA CORPORATION. All rights reserved.
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ from apex import amp
 import time
 from scaleoutbridge import EmptyObject, ScaleoutBridge as SBridge
 
-def preprocess_batch(args, input_ids, segment_ids, input_mask, labels_mlm, labels_nsp, input_only=False):
+def preprocess_batch(args, input_ids, segment_ids, input_mask, labels_mlm, labels_nsp,  packed_seqlens=None, input_only=False):
     b, s = input_ids.shape
     if args.pad_fmha:
         seqlens = input_mask.sum(-1, dtype=torch.int32)
@@ -45,6 +45,16 @@ def preprocess_batch(args, input_ids, segment_ids, input_mask, labels_mlm, label
         pids = compact(position_ids)
         lmlm = compact(labels_mlm)
 
+        # in case we deal with packed sequences we need to update cu_seqlens and pids
+        if packed_seqlens != None:
+            packed_seqlens = packed_seqlens.view(-1)
+            labels_nsp = labels_nsp.view(-1)[torch.nonzero(packed_seqlens, as_tuple=True)[-1]] #pick predictions for non-zero length sequences
+            packed_seqlens = packed_seqlens[torch.nonzero(packed_seqlens, as_tuple=True)[-1]]
+            pids = torch.cat([torch.arange(l, dtype=torch.int64, device=seqlens.device) for l in packed_seqlens]+
+                    [torch.zeros((s*b-packed_seqlens.sum(),), dtype=torch.int64, device=seqlens.device)]).view(b,s)
+            cu_seqlens = torch.zeros(packed_seqlens.shape[0]+1, dtype=torch.int32, device=packed_seqlens.device)
+            cu_seqlens[1:] = torch.cumsum(packed_seqlens, 0)
+            
         if input_only:
             return iids, sids, cu_seqlens, pids
 

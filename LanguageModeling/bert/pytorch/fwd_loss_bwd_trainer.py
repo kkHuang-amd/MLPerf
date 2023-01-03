@@ -105,7 +105,7 @@ class FwdLossBwdTrainer():
                                     tuple(t.clone() for t in sample_model_train),
                                     tuple(t.clone() for t in sample_model_eval) if self.args.eval_batch_size * world_size >= self.args.num_eval_examples else None,
                                     self.capture_stream,
-                                    warmup_iters=8,
+                                    warmup_iters=0,
                                     warmup_only=(not use_cuda_graph))
 
         bert_head_segment = bert_model.heads_only_segment
@@ -127,7 +127,7 @@ class FwdLossBwdTrainer():
                                                sample_head_tuple_train,
                                                sample_head_tuple_eval if self.args.eval_batch_size * world_size >= self.args.num_eval_examples else None,
                                                self.capture_stream,
-                                               warmup_iters=8,
+                                               warmup_iters=0,
                                                warmup_only=(not use_cuda_graph))
 
 

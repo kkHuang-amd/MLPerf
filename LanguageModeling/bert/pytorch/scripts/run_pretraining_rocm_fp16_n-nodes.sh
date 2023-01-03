@@ -13,13 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+module av
+
 pkill python3
 echo "killing all previous python processes"
 
 echo "Clear page cache"
 sync && sudo /sbin/sysctl vm.drop_caches=3
 
-NCCL_MAX_NCHANNELS=${NCCL_MAX_NCHANNELS:-4}
+NCCL_MAX_NCHANNELS=${NCCL_MAX_NCHANNELS:-8}
 
 export NCCL_MIN_NCHANNELS=4
 #workaround for MI250 nccl issue

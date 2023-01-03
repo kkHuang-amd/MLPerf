@@ -8,7 +8,7 @@
 #SBATCH --cpus-per-task=128
 #SBATCH --ntasks-per-node=1
 #SBATCH --gpus-per-node=8
-#SBATCH --time=00:30:00
+#SBATCH --time=00:40:00
 
 ulimit -n 1000000
 export DATA_DIR=/global/scratch/mlperf_datasets/wiki_20200101

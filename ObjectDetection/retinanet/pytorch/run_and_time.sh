@@ -34,7 +34,7 @@ BATCHSIZE=${BATCHSIZE:-2}
 EVALBATCHSIZE=${EVALBATCHSIZE:-${BATCHSIZE}}
 NUMEPOCHS=${NUMEPOCHS:-10}
 LOG_INTERVAL=${LOG_INTERVAL:-20}
-DATASET_DIR=${DATASET_DIR:-"/workspace/retinanet_data"}
+DATASET_DIR=${DATASET_DIR:-"/workspace/datasets/retinanet"}
 TORCH_HOME=${TORCH_HOME:-"$PWD/torch-home"}
 TIME_TAGS=${TIME_TAGS:-0}
 NVTX_FLAG=${NVTX_FLAG:-0}
@@ -42,17 +42,20 @@ NCCL_TEST=${NCCL_TEST:-0}
 EPOCH_PROF=${EPOCH_PROF:-0}
 SYNTH_DATA=${SYNTH_DATA:-0}
 DISABLE_CG=${DISABLE_CG:-0}
-ROCPROF=${ROCPROF:-0}
+TRACEDUMP=${TRACEDUMP:-0}
 
 TIMESTAMP=$(date +%Y-%m-%d-%H-%M-%S)
 LOG_DIR="${PWD}/logs"
-RUN_NAME="${USERNAME}_${PLATFORM}_${HOSTNAME}_${TIMESTAMP}"
+GPU_SUFFIX="gpu"
+if [ ${DGXNGPU} -gt 1 ]; then
+  GPU_SUFFIX="${GPU_SUFFIX}s"
+fi
+RUN_NAME="${USERNAME}_${PLATFORM}_${DGXNGPU}${GPU_SUFFIX}_${HOSTNAME}_${TIMESTAMP}"
 RUN_DIR="${LOG_DIR}/${RUN_NAME}"
 [ -d ${RUN_DIR} ] || mkdir -p ${RUN_DIR}
 
 PARAM_FILE="${RUN_DIR}/parameters.log"
 LOG_FILE="${RUN_DIR}/result.log"
-
 
 # start timing
 start=$(date +%s)
@@ -75,22 +78,22 @@ echo "NCCL_TEST: $NCCL_TEST" | tee -a $PARAM_FILE
 echo "EPOCH_PROF: $EPOCH_PROF" | tee -a $PARAM_FILE
 echo "SYNTH_DATA: $SYNTH_DATA" | tee -a $PARAM_FILE
 echo "DISABLE_CG: $DISABLE_CG" | tee -a $PARAM_FILE
-echo "ROCPROF: $ROCPROF" | tee -a $PARAM_FILE
+echo "TRACEDUMP: $TRACEDUMP" | tee -a $PARAM_FILE
 echo "===========================" | tee -a $PARAM_FILE
 echo "" | tee -a $PARAM_FILE
 
 # run benchmark
 echo "===  running benchmark  ===" | tee -a $PARAM_FILE
 if [ ${NVTX_FLAG} -gt 0 ]; then
-# FIXME mfrank 2022-May-24: NSYSCMD needs to be an array, not a space-separated string
- NSYSCMD="/nsight/bin/nsys profile --capture-range cudaProfilerApi --capture-range-end stop --sample=none --cpuctxsw=none  --trace=cuda,nvtx  --force-overwrite true --output /results/single_stage_detector_pytorch_${DGXNNODES}x${DGXNGPU}x${BATCHSIZE}_${DATESTAMP}_${SLURM_PROCID}_${SYNTH_DATA}_${DISABLE_CG}.nsys-rep "
+  # FIXME mfrank 2022-May-24: NSYSCMD needs to be an array, not a space-separated string
+  NSYSCMD="/nsight/bin/nsys profile --capture-range cudaProfilerApi --capture-range-end stop --sample=none --cpuctxsw=none  --trace=cuda,nvtx  --force-overwrite true --output /results/single_stage_detector_pytorch_${DGXNNODES}x${DGXNGPU}x${BATCHSIZE}_${DATESTAMP}_${SLURM_PROCID}_${SYNTH_DATA}_${DISABLE_CG}.nsys-rep "
 else
- NSYSCMD=""
+  NSYSCMD=""
 fi
 
 if [ ${SYNTH_DATA} -gt 0 ]; then
-EXTRA_PARAMS+=" --syn-dataset --cuda-graphs-syn "
-EXTRA_PARAMS=$(echo $EXTRA_PARAMS | sed 's/--dali//')
+  EXTRA_PARAMS+=" --syn-dataset --cuda-graphs-syn "
+  EXTRA_PARAMS=$(echo $EXTRA_PARAMS | sed 's/--dali//')
 fi
 
 declare -a CMD
@@ -111,17 +114,28 @@ else
 fi
 comment
 
-if [ ${ROCPROF} -gt 0 ]; then
-  ROCPROF_FILE="${RUN_DIR}/rocprof.csv"
-  ROCPROF_CMD="rocprof --stats --hip-trace --roctx-trace --timestamp on -d ${RUN_DIR}/rocprof -o ${ROCPROF_FILE}"
-  #ROCPROF_CMD="rocprof --stats -i in.txt --timestamp on -d ${RUN_DIR}/rocprof -o ${ROCPROF_FILE}"
+## If TRACEDUMP is set to 1 (or any value larger than 0),
+## then trace will be recorded during execution.
+if [ ${TRACEDUMP} -gt 0 ]; then
+  EXTRA_PARAMS=$(echo $EXTRA_PARAMS | sed 's/--async-coco//')
+  if [ -x "$(command -v nvidia-smi)" ]; then
+    # nsys
+    echo "Use nsys as tracer..."
+    TARGET_ID=0
+    NSYS_FILE="${RUN_DIR}/retinanet_gpu${TARGET_ID}.nsys-rep"
+    TRACER_CMD="nsys profile --capture-range cudaProfilerApi --capture-range-end stop --trace=cuda,nvtx,cudnn,cublas --gpu-metrics-device ${TARGET_ID} --force-overwrite true --output ${NSYS_FILE}"
+  elif [ -x "$(command -v rocm-smi)" ]; then
+    # rocprof
+    echo "Use rocprof as tracer..."
+    ROCPROF_FILE="${RUN_DIR}/retinanet.csv"
+    TRACER_CMD="rocprof --stats -i in.txt --hip-trace --roctx-trace --timestamp on -d ${RUN_DIR}/rocprof -o ${ROCPROF_FILE}"
+  fi
 fi
 
-CMD=( "python" "-m" "torch.distributed.launch" "--use_env" "--standalone" "--nnodes=1" "--nproc_per_node=${DGXNGPU}" )
+CMD=( "python3" "-m" "torch.distributed.launch" "--use_env" "--standalone" "--nnodes=1" "--nproc_per_node=${DGXNGPU}" )
 [ "$MEMBIND" = false ] && CMD+=( "--no_membind" )
 
-if [ "$LOGGER" = "apiLog.sh" ];
-then
+if [ "$LOGGER" = "apiLog.sh" ]; then
   LOGGER="${LOGGER} -p MLPerf/${MODEL_NAME} -v ${FRAMEWORK}/train/${DGXSYSTEM}"
   # TODO(ahmadki): track the apiLog.sh bug and remove the workaround
   # there is a bug in apiLog.sh preventing it from collecting
@@ -131,8 +145,7 @@ then
   # OMPI_COMM_WORLD_LOCAL_RANK is set by mpirun
   readonly node_rank="${SLURM_NODEID:-0}"
   readonly local_rank="${LOCAL_RANK:=${SLURM_LOCALID:=${OMPI_COMM_WORLD_LOCAL_RANK:-}}}"
-  if [ "$node_rank" -eq 0 ] && [ "$local_rank" -eq 0 ];
-  then
+  if [ "$node_rank" -eq 0 ] && [ "$local_rank" -eq 0 ]; then
     LOGGER=$LOGGER
   else
     LOGGER=""
@@ -154,7 +167,7 @@ echo "CMD: ${CMD[@]} train.py ${PARAMS[@]} $EXTRA_PARAMS" | tee -a $PARAM_FILE
 echo "===========================" | tee -a $PARAM_FILE
 
 # run training
-${LOGGER:-} ${ROCPROF_CMD:-} "${CMD[@]}" train.py "${PARAMS[@]}" ${EXTRA_PARAMS} 2>&1 | tee -a $LOG_FILE
+${LOGGER:-} ${TRACER_CMD:-} "${CMD[@]}" train.py "${PARAMS[@]}" ${EXTRA_PARAMS} 2>&1 | tee -a $LOG_FILE
 ret_code=$?
 
 set +x

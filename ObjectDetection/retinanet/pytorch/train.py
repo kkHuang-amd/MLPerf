@@ -274,6 +274,7 @@ def main(args):
     # Enable JIT
     if args.jit:
         assert args.backbone == 'resnext50_32x4d',"JIT was only tested with ResNeXt50-32x4d."
+<<<<<<< HEAD
         if cuda_available:
             if torch.version.cuda:
                 print("RetinaNet running on CUDA")
@@ -294,6 +295,26 @@ def main(args):
                 torch._C._jit_override_can_fuse_on_cpu(False)
                 torch._C._jit_override_can_fuse_on_gpu(False)
                 torch._C._jit_set_bailout_depth(20)
+=======
+        if torch.cuda.is_available() and torch.version.cuda:
+            print("RetinaNet running on CUDA")
+            torch._C._jit_set_nvfuser_enabled(True)
+            torch._C._jit_set_texpr_fuser_enabled(False)
+            torch._C._jit_set_profiling_executor(True)
+            torch._C._jit_set_profiling_mode(True)
+            torch._C._jit_override_can_fuse_on_cpu(False)
+            torch._C._jit_override_can_fuse_on_gpu(False)
+            torch._C._jit_set_bailout_depth(20)
+        elif torch.cuda.is_available() and torch.version.hip:
+            print("RetinaNet running on ROCm")
+            torch._C._jit_set_nvfuser_enabled(False)
+            torch._C._jit_set_texpr_fuser_enabled(True)
+            torch._C._jit_set_profiling_executor(True)
+            torch._C._jit_set_profiling_mode(True)
+            torch._C._jit_override_can_fuse_on_cpu(False)
+            torch._C._jit_override_can_fuse_on_gpu(False)
+            torch._C._jit_set_bailout_depth(20)
+>>>>>>> 22faee0... [RetinaNet] Print helpful information
 
     # Init distributed mode
     train_group, eval_group = utils.init_distributed_mode(args)
@@ -439,7 +460,11 @@ def main(args):
     t_data, t_fwd, t_bwd, t_eval = float(), float(), float(), float()
 
     # Start to record nsys trace
+<<<<<<< HEAD
     if cuda_available and torch.version.cuda:
+=======
+    if torch.cuda.is_available() and torch.version.cuda:
+>>>>>>> 22faee0... [RetinaNet] Print helpful information
         torch.cuda.cudart().cudaProfilerStart()
 
     # The dali based data_loader doesn't touch data at init time (lazy_init=True). So we place before after RUN_START
@@ -641,7 +666,11 @@ def main(args):
                                     graphed_model=graphed_model_eval, static_input=static_input_eval,
                                     static_output=static_model_output_eval,
                                     sbridge=sbridge)
+<<<<<<< HEAD
             t_eval += time.time() - t_eval_start
+=======
+            t_eval += t_eval_start - time.time()
+>>>>>>> 22faee0... [RetinaNet] Print helpful information
             if args.rank in args.eval_ranks and args.target_map and accuracy and accuracy >= args.target_map:
                 status = SUCCESS
                 break
@@ -664,7 +693,11 @@ def main(args):
                 status = SUCCESS
 
     # Stop recording nsys trace
+<<<<<<< HEAD
     if cuda_available and torch.version.cuda:
+=======
+    if torch.cuda.is_available() and torch.version.cuda:
+>>>>>>> 22faee0... [RetinaNet] Print helpful information
         torch.cuda.cudart().cudaProfilerStop()
 
     mllogger.end(key=RUN_STOP, metadata={"status": status}, sync=True)

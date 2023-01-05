@@ -15,10 +15,7 @@
 import math
 import sys
 import time
-import os
 import torch
-import torch.profiler
-import torch.autograd
 import torch.distributed as dist
 
 from mlperf_logger import mllogger
@@ -29,8 +26,6 @@ from mlperf_common.scaleoutbridge import ScaleoutBridgeBase as SBridge
 
 from async_executor import async_executor
 
-MAX_COUNT = 10
-USE_PYTORCH_PROF = False
 
 def preprocessing(images, targets, model_ptr, data_layout):
     # TODO: can be parallelized? should we use DALI? there must be a better way
@@ -183,152 +178,131 @@ def train_one_epoch(model, optimizer, scaler, data_loader, device, epoch, train_
         lr_scheduler = utils.warmup_lr_scheduler(optimizer, start_iter, warmup_iters, args.warmup_factor)
 
     accuracy = None
-    count = 0
-    use_rocprof = os.getenv("ROCPROF")
-    if USE_PYTORCH_PROF:
-        prof = torch.profiler.profile(
-            activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
-            on_trace_ready=torch.profiler.tensorboard_trace_handler('./trace-logs'),
-            record_shapes=True)
-        prof.start()
-    auto_prof = torch.autograd.profiler.emit_nvtx()
-    auto_prof.__enter__()
+    t_fwd, t_bwd, start_t = float(), float(), float()
     for images, targets in metric_logger.log_every(data_loader, args.print_freq, header):
-        with torch.profiler.record_function(f"Iteration {count+1}"):
-            sbridge.start_prof(SBridge.ITER_TIME)
-            if args.syn_dataset:
+        sbridge.start_prof(SBridge.ITER_TIME)
+        if args.syn_dataset:
+            images = list(image.to(device, non_blocking=True) for image in images)
+            images = torch.stack(images)
+
+            targets = {k: [dic[k].to(device, non_blocking=True) for dic in targets] for k in targets[0]}
+            targets['matched_idxs'] = torch.stack(targets['matched_idxs'])
+        else:
+            # DALI iterator provides data as needed
+            if not args.dali:
                 images = list(image.to(device, non_blocking=True) for image in images)
-                images = torch.stack(images)
-
+                # arrange "targets" as a Dict[List], instead of a List[Dict], so later it will be easier to use targets
+                # data in parallel (e.g., to get the entire batch "boxes", one can just use targets['boxes']).
+                # TODO: there might be some unused fields in the targets tensor, so perhaps can avoid some transfers
                 targets = {k: [dic[k].to(device, non_blocking=True) for dic in targets] for k in targets[0]}
-                targets['matched_idxs'] = torch.stack(targets['matched_idxs'])
-            else:
-                # DALI iterator provides data as needed
-                if not args.dali:
-                    images = list(image.to(device, non_blocking=True) for image in images)
-                    # arrange "targets" as a Dict[List], instead of a List[Dict], so later it will be easier to use targets
-                    # data in parallel (e.g., to get the entire batch "boxes", one can just use targets['boxes']).
-                    # TODO: there might be some unused fields in the targets tensor, so perhaps can avoid some transfers
-                    targets = {k: [dic[k].to(device, non_blocking=True) for dic in targets] for k in targets[0]}
-                with torch.profiler.record_function("Preprocessing"):
-                    # preprocessing
-                    images, targets = preprocessing(images, targets, model_ptr, args.data_layout)
 
-                # DALI can compute matched_idxs and put it in targets, but if it doesn't do so, do it here
-                if 'matched_idxs' not in targets:
-                    with torch.cuda.amp.autocast(enabled=args.amp):
-                        targets['matched_idxs'] = compute_matched_idxs(targets['boxes'], model_ptr)
+                # preprocessing
+                images, targets = preprocessing(images, targets, model_ptr, args.data_layout)
 
-            if not args.cuda_graphs:
-                optimizer.zero_grad()
+            # DALI can compute matched_idxs and put it in targets, but if it doesn't do so, do it here
+            if 'matched_idxs' not in targets:
+                with torch.cuda.amp.autocast(enabled=args.amp):
+                    targets['matched_idxs'] = compute_matched_idxs(targets['boxes'], model_ptr)
 
-            # init necessary data in the scratchpad
-            with torch.cuda.amp.autocast(enabled=args.amp):
-                init_scratchpad(images, targets, args.batch_size, args.num_classes, args.amp,
-                                args.apex_focal_loss, args.max_boxes, args.cls_head_pad, args.reg_head_pad,
-                                args.cuda_graphs)
+        if not args.cuda_graphs:
+            optimizer.zero_grad()
 
-            if lr_scheduler is not None:
-                lr_scheduler.step()
+        # init necessary data in the scratchpad
+        with torch.cuda.amp.autocast(enabled=args.amp):
+            init_scratchpad(images, targets, args.batch_size, args.num_classes, args.amp,
+                            args.apex_focal_loss, args.max_boxes, args.cls_head_pad, args.reg_head_pad,
+                            args.cuda_graphs)
 
-            if args.cuda_graphs:
-                if args.not_graphed_prologues:
-                    with torch.cuda.amp.autocast(enabled=args.amp):
-                        # loss prologue: preprocess everything that does not require model forward and backward
-                        # use the padded scratchpad buffers if reg_head_pad/cls_head_pad are toggled
-                        targets_boxes = targets['boxes'] if not args.reg_head_pad else utils.ScratchPad.target_boxes_padded
-                        targets_labels = targets['labels'] if not args.cls_head_pad else utils.ScratchPad.target_labels_padded
+        if lr_scheduler is not None:
+            lr_scheduler.step()
 
-                        gt_classes_target, target_regression, num_foreground, valid_idxs, foreground_idxs_mask = \
-                            loss_preprocessing(targets_boxes, targets_labels, targets['matched_idxs'], model_ptr,
-                                               args.apex_focal_loss, args.max_boxes, args.cls_head_pad, args.reg_head_pad)
-
-                static_input.copy_(images)
-                # All necessary data is copied to the graph buffers in init_scratchpad
-                # The graph is programmed to use pointers to the scratchpad (besides images)
-
-                if args.not_graphed_prologues:
-                    static_prologues_out[0].copy_(gt_classes_target)
-                    static_prologues_out[1].copy_(target_regression)
-                    static_prologues_out[2].copy_(num_foreground)
-                    static_prologues_out[3].copy_(valid_idxs)
-                    static_prologues_out[4].copy_(foreground_idxs_mask)
-
-                # graphed model comprises loss_preprocessing->forward->compute_loss->backward
-                graphed_model.replay()
-                if not args.skip_metric_loss:
-                    dist.all_reduce(tensor=static_loss, group=train_group)
-                    losses_reduced = static_loss / utils.get_world_size()
-                if args.sync_after_graph_replay:
-                    torch.cuda.synchronize()
-                sbridge.start_prof(SBridge.OPT_TIME)
-                scaler.step(optimizer)
-                scaler.update()
-                sbridge.stop_prof(SBridge.OPT_TIME)
-
-            else:
+        if args.cuda_graphs:
+            if args.not_graphed_prologues:
                 with torch.cuda.amp.autocast(enabled=args.amp):
                     # loss prologue: preprocess everything that does not require model forward and backward
                     # use the padded scratchpad buffers if reg_head_pad/cls_head_pad are toggled
-                    targets_boxes = utils.ScratchPad.target_boxes_padded if args.reg_head_pad else targets['boxes']
-                    targets_labels = utils.ScratchPad.target_labels_padded if args.cls_head_pad else targets['labels']
+                    targets_boxes = targets['boxes'] if not args.reg_head_pad else utils.ScratchPad.target_boxes_padded
+                    targets_labels = targets['labels'] if not args.cls_head_pad else utils.ScratchPad.target_labels_padded
 
-                    with torch.profiler.record_function("Loss preprocessing"):
-                        gt_classes_target, target_regression, num_foreground, valid_idxs, foreground_idxs_mask = \
-                            loss_preprocessing(targets_boxes, targets_labels, targets['matched_idxs'], model_ptr,
-                                               args.apex_focal_loss, args.max_boxes, args.cls_head_pad, args.reg_head_pad)
+                    gt_classes_target, target_regression, num_foreground, valid_idxs, foreground_idxs_mask = \
+                        loss_preprocessing(targets_boxes, targets_labels, targets['matched_idxs'], model_ptr,
+                                           args.apex_focal_loss, args.max_boxes, args.cls_head_pad, args.reg_head_pad)
 
-                    with torch.profiler.record_function("Forward"):
-                        # forward
-                        sbridge.start_prof(SBridge.FWD_TIME)
+            static_input.copy_(images)
+            # All necessary data is copied to the graph buffers in init_scratchpad
+            # The graph is programmed to use pointers to the scratchpad (besides images)
 
-                        model_output = model(images)
-                        # features = model_output[0:5]
-                        # head_outputs = {'cls_logits': model_output[5], 'bbox_regression': model_output[6]}
+            if args.not_graphed_prologues:
+                static_prologues_out[0].copy_(gt_classes_target)
+                static_prologues_out[1].copy_(target_regression)
+                static_prologues_out[2].copy_(num_foreground)
+                static_prologues_out[3].copy_(valid_idxs)
+                static_prologues_out[4].copy_(foreground_idxs_mask)
 
-                        with torch.profiler.record_function("Loss computation"):
-                            # loss (given the prologue computations)
-                            cls_loss, reg_loss = compute_loss(model_ptr, model_output[5], model_output[6], valid_idxs,
-                                                              gt_classes_target, num_foreground, target_regression,
-                                                              foreground_idxs_mask, args.apex_focal_loss, args.reg_head_pad)
-                            loss_dict = {'classification': cls_loss, 'bbox_regression': reg_loss}
-                            losses = sum(loss for loss in loss_dict.values())
+            # graphed model comprises loss_preprocessing->forward->compute_loss->backward
+            graphed_model.replay()
+            if not args.skip_metric_loss:
+                dist.all_reduce(tensor=static_loss, group=train_group)
+                losses_reduced = static_loss / utils.get_world_size()
+            if args.sync_after_graph_replay:
+                torch.cuda.synchronize()
+            sbridge.start_prof(SBridge.OPT_TIME)
+            scaler.step(optimizer)
+            scaler.update()
+            sbridge.stop_prof(SBridge.OPT_TIME)
 
-                        # --- old loss (for debug)
-                        # loss_dict_ = model_ptr.compute_loss(targets, head_outputs)
-                        # assert(torch.allclose(loss_dict['classification'], loss_dict_['classification']))
-                        # assert(torch.allclose(loss_dict['bbox_regression'], loss_dict_['bbox_regression']))
+        else:
+            start_t = time.time()
+            with torch.cuda.amp.autocast(enabled=args.amp):
+                # loss prologue: preprocess everything that does not require model forward and backward
+                # use the padded scratchpad buffers if reg_head_pad/cls_head_pad are toggled
+                targets_boxes = utils.ScratchPad.target_boxes_padded if args.reg_head_pad else targets['boxes']
+                targets_labels = utils.ScratchPad.target_labels_padded if args.cls_head_pad else targets['labels']
 
-                        # reduce losses over all GPUs for logging purposes
-                        # TODO: remove
-                        with torch.profiler.record_function("Sum reduction"):
-                            loss_dict_reduced = utils.reduce_dict(loss_dict, group=train_group)
-                            losses_reduced = sum(loss for loss in loss_dict_reduced.values())
-                            loss_value = losses_reduced.item()
-                            sbridge.stop_prof(SBridge.FWD_TIME)
+                gt_classes_target, target_regression, num_foreground, valid_idxs, foreground_idxs_mask = \
+                    loss_preprocessing(targets_boxes, targets_labels, targets['matched_idxs'], model_ptr,
+                                       args.apex_focal_loss, args.max_boxes, args.cls_head_pad, args.reg_head_pad)
 
-                    if not math.isfinite(loss_value):
-                        print("Loss is {}, stopping training".format(loss_value))
-                        print(loss_dict_reduced)
-                        sys.exit(1)
+                # forward
+                sbridge.start_prof(SBridge.FWD_TIME)
 
-                with torch.profiler.record_function("Backward"):
-                    # backward
-                    sbridge.start_prof(SBridge.BWD_TIME)
-                    scaler.scale(losses).backward()
-                    sbridge.stop_start_prof(SBridge.BWD_TIME, SBridge.OPT_TIME)
-                    scaler.step(optimizer)
-                    scaler.update()
-                    sbridge.stop_prof(SBridge.OPT_TIME)
+                model_output = model(images)
+                # features = model_output[0:5]
+                # head_outputs = {'cls_logits': model_output[5], 'bbox_regression': model_output[6]}
 
-            if USE_PYTORCH_PROF:
-                prof.step()
-            if USE_PYTORCH_PROF or use_rocprof:
-                count += 1
-                if count >= MAX_COUNT:
-                    prof_name = "PyTorch Profiler" if USE_PYTORCH_PROF else "rocProfiler"
-                    print(f"[{prof_name}] count ({count}) is greater than or equal to MAX_COUNT ({MAX_COUNT})")
-                    break
+                # loss (given the prologue computations)
+                cls_loss, reg_loss = compute_loss(model_ptr, model_output[5], model_output[6], valid_idxs,
+                                                  gt_classes_target, num_foreground, target_regression,
+                                                  foreground_idxs_mask, args.apex_focal_loss, args.reg_head_pad)
+                loss_dict = {'classification': cls_loss, 'bbox_regression': reg_loss}
+                losses = sum(loss for loss in loss_dict.values())
+
+                # --- old loss (for debug)
+                # loss_dict_ = model_ptr.compute_loss(targets, head_outputs)
+                # assert(torch.allclose(loss_dict['classification'], loss_dict_['classification']))
+                # assert(torch.allclose(loss_dict['bbox_regression'], loss_dict_['bbox_regression']))
+
+                # reduce losses over all GPUs for logging purposes
+                # TODO: remove
+                loss_dict_reduced = utils.reduce_dict(loss_dict, group=train_group)
+                losses_reduced = sum(loss for loss in loss_dict_reduced.values())
+                loss_value = losses_reduced.item()
+                sbridge.stop_prof(SBridge.FWD_TIME)
+
+                if not math.isfinite(loss_value):
+                    print("Loss is {}, stopping training".format(loss_value))
+                    print(loss_dict_reduced)
+                    sys.exit(1)
+            t_fwd += time.time() - start_t
+            # backward
+            start_t = time.time()
+            sbridge.start_prof(SBridge.BWD_TIME)
+            scaler.scale(losses).backward()
+            sbridge.stop_start_prof(SBridge.BWD_TIME, SBridge.OPT_TIME)
+            scaler.step(optimizer)
+            scaler.update()
+            sbridge.stop_prof(SBridge.OPT_TIME)
+            t_bwd += time.time() - start_t
 
         if not args.skip_metric_loss:
             if not args.cuda_graphs:
@@ -354,16 +328,13 @@ def train_one_epoch(model, optimizer, scaler, data_loader, device, epoch, train_
 
         sbridge.stop_prof(SBridge.ITER_TIME)
 
-    if USE_PYTORCH_PROF:
-        prof.stop()
-    auto_prof.__exit__(None, None, None)
     sbridge.stop_epoch_prof()
     mllogger.end(key=EPOCH_STOP, value=epoch, metadata={"epoch_num": epoch}, sync=True, sync_group=train_group)
     summary = metric_logger.summary
     if summary['samples'] > 0:
         throughput = summary['samples'] / (summary['end_time'] - summary['start_time'])
         mllogger.event(key='tracked_stats', value={'throughput': throughput}, metadata={'step': (epoch + 1)})
-    return metric_logger, accuracy
+    return metric_logger, accuracy, t_fwd, t_bwd
 
 
 @torch.no_grad()

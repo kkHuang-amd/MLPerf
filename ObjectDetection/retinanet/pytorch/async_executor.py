@@ -41,7 +41,7 @@ class AsyncExecutor(object):
     def submit(self, tag, fn, *args, **kwargs):
         self.tasks[tag] = self.pool.submit(fn, *args, **kwargs)
 
-    def shutdown(wait=True):
+    def shutdown(self, wait=True):
         self.pool.shutdown(wait=True)
 
     #############################

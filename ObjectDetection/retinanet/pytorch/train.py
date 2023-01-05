@@ -273,13 +273,24 @@ def main(args):
     # Enable JIT
     if args.jit:
         assert args.backbone == 'resnext50_32x4d',"JIT was only tested with ResNeXt50-32x4d."
-        torch._C._jit_set_nvfuser_enabled(True)
-        torch._C._jit_set_texpr_fuser_enabled(False)
-        torch._C._jit_set_profiling_executor(True)
-        torch._C._jit_set_profiling_mode(True)
-        torch._C._jit_override_can_fuse_on_cpu(False)
-        torch._C._jit_override_can_fuse_on_gpu(False)
-        torch._C._jit_set_bailout_depth(20)
+        if torch.cuda.is_available() and torch.version.cuda:
+            print("RetinaNet running on CUDA")
+            torch._C._jit_set_nvfuser_enabled(True)
+            torch._C._jit_set_texpr_fuser_enabled(False)
+            torch._C._jit_set_profiling_executor(True)
+            torch._C._jit_set_profiling_mode(True)
+            torch._C._jit_override_can_fuse_on_cpu(False)
+            torch._C._jit_override_can_fuse_on_gpu(False)
+            torch._C._jit_set_bailout_depth(20)
+        elif torch.cuda.is_available() and torch.version.hip:
+            print("RetinaNet running on ROCm")
+            torch._C._jit_set_nvfuser_enabled(False)
+            torch._C._jit_set_texpr_fuser_enabled(True)
+            torch._C._jit_set_profiling_executor(True)
+            torch._C._jit_set_profiling_mode(True)
+            torch._C._jit_override_can_fuse_on_cpu(False)
+            torch._C._jit_override_can_fuse_on_gpu(False)
+            torch._C._jit_set_bailout_depth(20)
 
     # Init distributed mode
     train_group, eval_group = utils.init_distributed_mode(args)
@@ -421,6 +432,12 @@ def main(args):
 
     data_loader = None
     data_loader_test = None
+    # Record execution time
+    t_data, t_fwd, t_bwd, t_eval = float(), float(), float(), float()
+
+    # Start to record nsys trace
+    if torch.cuda.is_available() and torch.version.cuda:
+        torch.cuda.cudart().cudaProfilerStart()
 
     # The dali based data_loader doesn't touch data at init time (lazy_init=True). So we place before after RUN_START
     if args.dali and (args.rank in args.train_ranks):
@@ -521,7 +538,7 @@ def main(args):
                 pin_memory=True, collate_fn=utils.collate_fn)
 
     sbridge.stop_prof(SBridge.LOAD_TIME)
-
+    t_data += time.time() - start_time
     if args.rank in args.eval_ranks:
         mllogger.event(key=EVAL_SAMPLES, value=len(data_loader_test))
 
@@ -559,20 +576,19 @@ def main(args):
                 if args.distributed and not args.dali and not args.syn_dataset:
                     train_sampler.set_epoch(epoch)
 
-                metric_logger, accuracy = train_one_epoch(model=model,
-                                                          optimizer=optimizer,
-                                                          scaler=scaler,
-                                                          data_loader=data_loader,
-                                                          device=device,
-                                                          epoch=epoch,
-                                                          train_group=train_group,
-                                                          args=args,
-                                                          graphed_model=graphed_model,
-                                                          static_input=static_input,
-                                                          static_loss=static_loss,
-                                                          static_prologues_out=static_prologues_out,
-                                                          sbridge=sbridge)
-
+                metric_logger, accuracy, t_fwd_epoch, t_bwd_epoch = train_one_epoch(model=model,
+                                                                                    optimizer=optimizer,
+                                                                                    scaler=scaler,
+                                                                                    data_loader=data_loader,
+                                                                                    device=device,
+                                                                                    epoch=epoch,
+                                                                                    train_group=train_group,
+                                                                                    args=args,
+                                                                                    graphed_model=graphed_model,
+                                                                                    static_input=static_input,
+                                                                                    static_loss=static_loss,
+                                                                                    static_prologues_out=static_prologues_out,
+                                                                                    sbridge=sbridge)
                 if args.output_dir:
                     checkpoint = {
                         'model': model_without_ddp.state_dict(),
@@ -586,7 +602,8 @@ def main(args):
                     utils.save_on_master(
                         checkpoint,
                         os.path.join(args.output_dir, 'checkpoint.pth'))
-
+                t_fwd += t_fwd_epoch
+                t_bwd += t_bwd_epoch
                 if args.target_map and accuracy and accuracy >= args.target_map:
                     status = SUCCESS
                     break
@@ -609,7 +626,7 @@ def main(args):
             ############################################################################################################
             # Validation
             ############################################################################################################
-            """
+            t_eval_start = time.time()
             if args.rank in args.eval_ranks:
                 accuracy = evaluate(model=model,
                                     data_loader=data_loader_test,
@@ -620,14 +637,13 @@ def main(args):
                                     graphed_model=graphed_model_eval, static_input=static_input_eval,
                                     static_output=static_model_output_eval,
                                     sbridge=sbridge)
-                if args.target_map and accuracy and accuracy >= args.target_map:
-                    status = SUCCESS
-                    break
-            """
+            t_eval += t_eval_start - time.time()
+            if args.rank in args.eval_ranks and args.target_map and accuracy and accuracy >= args.target_map:
+                status = SUCCESS
+                break
             ############################################################################################################
 
     # Wait for async coco jobs if necessary
-    """
     if args.async_coco:
         while status != SUCCESS and len(async_executor.tags()):
             # FIXME(ahmadki): --num-eval-ranks
@@ -642,11 +658,23 @@ def main(args):
 
             if args.target_map and accuracy and accuracy >= args.target_map:
                 status = SUCCESS
-    """
+
+    # Stop recording nsys trace
+    if torch.cuda.is_available() and torch.version.cuda:
+        torch.cuda.cudart().cudaProfilerStop()
+
     mllogger.end(key=RUN_STOP, metadata={"status": status}, sync=True)
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+    data_time_str = str(datetime.timedelta(seconds=int(t_data)))
+    fwd_time_str = str(datetime.timedelta(seconds=int(t_fwd)))
+    bwd_time_str = str(datetime.timedelta(seconds=int(t_bwd)))
+    eval_time_str = str(datetime.timedelta(seconds=int(t_eval)))
     print('Training time {}'.format(total_time_str))
+    print('Data loader {}'.format(data_time_str))
+    print('Forward path {}'.format(fwd_time_str))
+    print('Backward path {}'.format(bwd_time_str))
+    print('Evaluation {}'.format(eval_time_str))
     mllogger.event(key=STATUS, value=status, unique=False)
 
 

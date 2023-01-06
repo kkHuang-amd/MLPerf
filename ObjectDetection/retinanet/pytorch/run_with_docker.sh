@@ -21,15 +21,15 @@ set -euxo pipefail
 : "${CONT:?CONT not set}"
 # Vars with defaults
 : "${NEXP:=5}"
-: "${DATESTAMP:=$(date +'%y%m%d%H%M%S%N')}"
+: "${DATESTAMP:=$(date +'%y%m%d%H%M%S')}"
 : "${CLEAR_CACHES:=1}"
 : "${BACKBONE_DIR:=./torch-home}"
-: "${CONT_NAME:=single_stage_detector}"
+: "${CONT_NAME:=retinanet-rocm}"
 # ci automagically sets this correctly on Selene
 : "${DATADIR:=/raid/datasets/openimages/open-images-v6}"
 : "${LOGDIR:=$(pwd)/results}"
 # Logging
-LOG_BASE="ssd_${DGXNNODES}x${DGXNGPU}x${BATCHSIZE}_${DATESTAMP}"
+LOG_BASE="retinanet_${DGXNNODES}x${DGXNGPU}x${BATCHSIZE}_${DATESTAMP}"
 readonly LOG_FILE_BASE="${LOGDIR}/${LOG_BASE}"
 # Other vars
 readonly _config_file="./config_${DGXSYSTEM}.sh"
@@ -42,8 +42,7 @@ CONT_MOUNTS=(
 # MLPerf vars
 MLPERF_HOST_OS=$(
     source /etc/os-release
-    source /etc/dgx-release || true
-    echo "${PRETTY_NAME} / ${DGX_PRETTY_NAME:-???} ${DGX_OTA_VERSION:-${DGX_SWBUILD_VERSION:-???}}"
+    echo "${PRETTY_NAME}"
 )
 export MLPERF_HOST_OS
 

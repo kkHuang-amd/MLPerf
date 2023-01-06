@@ -44,7 +44,7 @@ SYNTH_DATA=${SYNTH_DATA:-0}
 DISABLE_CG=${DISABLE_CG:-0}
 TRACEDUMP=${TRACEDUMP:-0}
 
-TIMESTAMP=$(date +%Y-%m-%d-%H-%M-%S)
+TIMESTAMP=$(date +'%Y%m%d%H%M%S')
 LOG_DIR="${PWD}/logs"
 GPU_SUFFIX="gpu"
 if [ ${DGXNGPU} -gt 1 ]; then

@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name single_stage_detector
+#SBATCH --job-name retinanet
 
 # Copyright (c) 2021-2022, NVIDIA CORPORATION. All rights reserved.
 #
@@ -23,10 +23,10 @@ set -euxo pipefail
 # Vars with defaults
 : "${MLPERF_RULESET:=2.1.0}"
 : "${NEXP:=5}"
-: "${DATESTAMP:=$(date +'%y%m%d%H%M%S%N')}"
+: "${DATESTAMP:=$(date +'%y%m%d%H%M%S')}"
 : "${CLEAR_CACHES:=1}"
-: "${WORK_DIR:=/workspace/ssd}"
-: "${CONT_NAME:=single_stage_detector}"
+: "${WORK_DIR:=/workspace/retinanet}"
+: "${CONT_NAME:=retinanet-rocm}"
 # ci automagically sets this correctly on Selene
 : "${LOGDIR:=./results}"
 
@@ -36,14 +36,14 @@ set -euxo pipefail
 : "${NCCL_TEST:=0}"
 : "${SYNTH_DATA:=0}"
 : "${EPOCH_PROF:=0}"
-: "${DISABLE_CG:=0}"
+: "${DISABLE_CG:=1}"
 
 # API Logging defaults
 : "${API_LOGGING:=0}"
 : "${API_LOG_DIR:=./api_logs}" # apiLog.sh output dir
 
 LOGBASE="${DATESTAMP}"
-SPREFIX="single_stage_detector_pytorch_${DGXNNODES}x${DGXNGPU}x${BATCHSIZE}_${DATESTAMP}"
+SPREFIX="retinanet_pytorch_${DGXNNODES}x${DGXNGPU}x${BATCHSIZE}_${DATESTAMP}"
 
 if [ ${TIME_TAGS} -gt 0 ]; then
     LOGBASE="${SPREFIX}_mllog"
@@ -100,12 +100,12 @@ if [[ "${NVTX_FLAG}" -gt 0 ]]; then
     CONT_MOUNTS="${CONT_MOUNTS},${NVMLPERF_NSIGHT_LOCATION}:/nsight"
 fi
 # API Logging
-if [ "${API_LOGGING}" -eq 1 ]; then
+if [ "${API_LOGGING}" -gt 0 ]; then
     CONT_MOUNTS="${CONT_MOUNTS},${API_LOG_DIR}:/logs"
 fi
 
 # Setup directories
-( umask 0002; mkdir -p "${LOGDIR}" )
+( mkdir -p "${LOGDIR}" )
 srun --ntasks="${SLURM_JOB_NUM_NODES}" mkdir -p "${LOGDIR}"
 
 # Setup container
@@ -119,7 +119,7 @@ srun -N1 -n1 --container-name="${CONT_NAME}" ibv_devinfo --list
 srun -N1 -n1 --container-name="${CONT_NAME}" nvidia-smi topo -m
 
 echo "NCCL_TEST = ${NCCL_TEST}"
-if [[ ${NCCL_TEST} -eq 1 ]]; then
+if [[ ${NCCL_TEST} -gt 0 ]]; then
     (srun --mpi=pmix --ntasks="$(( SLURM_JOB_NUM_NODES * DGXNGPU ))" --ntasks-per-node="${DGXNGPU}" \
          --container-name="${CONT_NAME}" all_reduce_perf_mpi -b 33260119 -e 33260119 -d half -G 1    ) |& tee "${LOGDIR}/${SPREFIX}_nccl.log"
 

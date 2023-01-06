@@ -12,39 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ARG FROM_IMAGE_NAME=nvcr.io/nvidia/pytorch:22.09-py3
-
-################################################################################
-# DALI box iou builder image
-################################################################################
-FROM ${FROM_IMAGE_NAME} AS dali-box-iou-builder
-WORKDIR /workspace/csrc
-COPY csrc/dali_box_iou ./dali_box_iou
-
-# Build CUDA box iou (written as a DALI extension)
-RUN cd dali_box_iou && \
-    mkdir build && \
-    cd build && \
-    cmake .. && \
-    make
-################################################################################
-
-
-################################################################################
-# DALI proposal matcher builder image
-################################################################################
-FROM ${FROM_IMAGE_NAME} AS dali-proposal-matcher-builder
-WORKDIR /workspace/csrc
-COPY csrc/dali_proposal_matcher ./dali_proposal_matcher
-
-# Build CUDA proposal matcher (written as a DALI extension)
-RUN cd dali_proposal_matcher && \
-    mkdir build && \
-    cd build && \
-    cmake .. && \
-    make
-################################################################################
-
+ARG FROM_IMAGE_NAME=compute-artifactory.amd.com:5000/rocm-plus-docker/framework/compute-rocm-dkms-no-npi-hipclang:11364_ubuntu20.04_py3.8_pytorch_release-1.10_5c49132
 
 ################################################################################
 # RetinaNet
@@ -53,11 +21,9 @@ FROM ${FROM_IMAGE_NAME}
 
 # Build args
 ARG MAX_JOBS=4
-ARG TORCH_CUDNN_V8_API_ENABLED=1
 
 # Set env vars
 ENV MAX_JOBS=${MAX_JOBS}
-ENV TORCH_CUDNN_V8_API_ENABLED=${TORCH_CUDNN_V8_API_ENABLED}
 
 # Install dependencies for system configuration logger
 RUN apt-get update && \
@@ -65,7 +31,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Set working directory
-WORKDIR /workspace/ssd
+WORKDIR /workspace/retinanet
 
 # Copy code
 COPY . .
@@ -74,9 +40,7 @@ COPY . .
 RUN pip uninstall -y pycocotools
 
 # Install python dependencies
+RUN pip install --no-cache-dir pybind11
 RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy DALI box iou and proposal matcher
-COPY --from=dali-box-iou-builder /workspace/csrc/dali_box_iou/build/lib_box_iou.so /usr/local/lib/lib_box_iou.so
-COPY --from=dali-proposal-matcher-builder /workspace/csrc/dali_proposal_matcher/build/lib_proposal_matcher.so /usr/local/lib/lib_proposal_matcher.so
 ################################################################################
+

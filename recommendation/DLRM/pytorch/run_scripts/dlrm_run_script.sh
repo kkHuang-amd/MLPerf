@@ -28,6 +28,10 @@ while true; do
     --mlperf-log ) mlperf_log=$2; shift 2 ;;
     --use-embedding-compression ) use_emb_comp=True; shift ;;
     --train-batch-size ) train_batch_size=$2; shift 2 ;;
+    --wsteps ) wsteps=$2; shift 2 ;;
+    --dsteps ) dsteps=$2; shift 2 ;;
+    --dsstep ) dsstep=$2; shift 2 ;;
+    --lr ) lr=$2; shift 2 ;;
     --config ) config_file=$2; shift 2 ;;
     --debug )  opt+=" --debug"; shift ;;
     --use-wmma-interaction ) opt+=" --use_wmma_interaction"; shift ;;
@@ -141,11 +145,7 @@ else
   export MLPERF_CACHE_CLEAR=0
 fi
 
-CURRENTDATE=`date +"%Y-%m-%d-%T" | sed -e "s/:/-/g"`
-mlperf_log="dlrm-${CURRENTDATE}-${train_batch_size}-${wsteps}-${dsteps}-${dsstep}-${lr}-${fp}.log"
-export MLPERF_LOG_FILE=$mlperf_log
-
-python3 -u -m mlperf_utils.bind_launch \
+CMD="python3 -u -m mlperf_utils.bind_launch \
   --nproc_per_node $gpus_per_node \
   --auto_binding \
   scripts/dist_train.py \
@@ -162,6 +162,16 @@ python3 -u -m mlperf_utils.bind_launch \
   --decay_end_lr 0 \
   --model_config dlrm/config/mlperf_40m.limit.json \
   --test_batch_size $test_batch_size \
-  $opt
+  $opt"
 
-echo "MLPerf log: $mlperf_log"
+CURRENTDATE=`date +"%Y-%m-%d-%T" | sed -e "s/:/-/g"`
+
+#mlperf_log="dlrm-${CURRENTDATE}-${train_batch_size}-${wsteps}-${dsteps}-${dsstep}-${lr}-${fp}.log"
+#export MLPERF_LOG_FILE=$mlperf_log
+#echo "MLPerf log: $mlperf_log"
+
+LOG="${CURRENTDATE}-${train_batch_size}-${wsteps}-${dsteps}-${dsstep}-${lr}-${fp}.log"
+env 2>&1 | tee -a ${LOG}
+echo ${CMD} | tee -a ${LOG}
+${CMD} 2>&1 | tee -a ${LOG}
+

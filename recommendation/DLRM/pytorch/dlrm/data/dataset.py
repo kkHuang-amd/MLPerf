@@ -251,7 +251,7 @@ class DistCriteoDataset(Dataset):
             idx = self.permutation[idx]
         raw_label_data = os.pread(
             self.label_file, self.bytes_per_batch["label"], idx * self.bytes_per_batch["label"])
-        click = torch.from_numpy(np.frombuffer(raw_label_data, dtype=np.float32))
+        click = torch.from_numpy(np.frombuffer(raw_label_data, dtype=np.float32).copy())
 
         if self.numerical_features_file is not None:
             raw_numerical_data = os.pread(
@@ -259,7 +259,7 @@ class DistCriteoDataset(Dataset):
                 self.bytes_per_batch["numerical"],
                 idx * self.bytes_per_batch["numerical"])
             numerical_features = torch.from_numpy(np.frombuffer(raw_numerical_data,
-                                                                dtype=np.float32)).view(-1, 13)
+                                                                dtype=np.float32).copy()).view(-1, 13)
         else:
             numerical_features = None
 

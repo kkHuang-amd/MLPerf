@@ -22,12 +22,13 @@ set -euxo pipefail
 # Vars with defaults
 : "${NEXP:=5}"
 : "${DATESTAMP:=$(date +'%y%m%d%H%M%S')}"
-: "${CLEAR_CACHES:=1}"
-: "${BACKBONE_DIR:=./torch-home}"
+: "${CLEAR_CACHES:=0}"
+: "${BACKBONE_DIR:=$(pwd)/torch-home}"
 : "${CONT_NAME:=retinanet-rocm}"
 # ci automagically sets this correctly on Selene
 : "${DATADIR:=/raid/datasets/openimages/open-images-v6}"
 : "${LOGDIR:=$(pwd)/results}"
+
 # Logging
 LOG_BASE="retinanet_${DGXNNODES}x${DGXNGPU}x${BATCHSIZE}_${DATESTAMP}"
 readonly LOG_FILE_BASE="${LOGDIR}/${LOG_BASE}"
@@ -39,12 +40,14 @@ CONT_MOUNTS=(
     "--volume=${LOGDIR}:/results"
     "--volume=${BACKBONE_DIR}:/root/.cache/torch"
 )
+
 # MLPerf vars
 MLPERF_HOST_OS=$(
     source /etc/os-release
     echo "${PRETTY_NAME}"
 )
 export MLPERF_HOST_OS
+export USE_DOCKER=1
 
 # Setup directories
 mkdir -p "${LOGDIR}"
@@ -52,6 +55,7 @@ mkdir -p "${LOGDIR}"
 # Get list of envvars to pass to docker
 mapfile -t _config_env < <(env -i bash -c ". ${_config_file} && compgen -e" | grep -E -v '^(PWD|SHLVL)')
 _config_env+=(MLPERF_HOST_OS)
+_config_env+=(USE_DOCKER)
 mapfile -t _config_env < <(for v in "${_config_env[@]}"; do echo "--env=$v"; done)
 
 # Cleanup container
@@ -62,16 +66,12 @@ cleanup_docker
 trap 'set -eux; cleanup_docker' EXIT
 
 # Setup container
-if [ -z "${NV_GPU-}" ]; then
-  readonly _docker_gpu_args="--gpus all"
-else
-  readonly _docker_gpu_args='--gpus="'device=${NV_GPU}'" -e NVIDIA_VISIBLE_DEVICES='"${NV_GPU}"
-fi
+readonly _docker_gpu_args="--device=/dev/kfd --device=/dev/dri --group-add video --cap-add=SYS_PTRACE"
 
 docker run ${_docker_gpu_args} --rm --init --detach \
     --net=host --uts=host --ipc=host --security-opt=seccomp=unconfined \
     --ulimit=stack=67108864 --ulimit=memlock=-1 \
-    --name="${CONT_NAME}" "${_cont_mounts[@]}" \
+    --name="${CONT_NAME}" "${CONT_MOUNTS[@]}" \
     "${CONT}" sleep infinity
 #make sure container has time to finish initialization
 sleep 30

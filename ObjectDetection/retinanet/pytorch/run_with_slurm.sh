@@ -24,6 +24,12 @@ set -e
 # Only rank print
 [ "${SLURM_LOCALID-0}" -ne 0 ] && set +x
 
+source config_MI250_002x08x004.sh
+
+# NCCL
+export NCCL_MIN_NCHANNELS=${NCCL_MIN_NCHANNELS:-4} 
+export NCCL_MAX_NCHANNELS=${NCCL_MAX_NCHANNELS:-8}
+
 # Set variables
 [ "${DEBUG}" = "1" ] && set -x
 USERNAME=${USERNAME:-"amd"}
@@ -44,7 +50,6 @@ EPOCH_PROF=${EPOCH_PROF:-0}
 SYNTH_DATA=${SYNTH_DATA:-0}
 DISABLE_CG=${DISABLE_CG:-0}
 TRACEDUMP=${TRACEDUMP:-0}
-USE_DOCKER=${USE_DOCKER:-0}
 
 TIMESTAMP=$(date +'%Y%m%d%H%M%S')
 GPU_SUFFIX="gpu"
@@ -60,17 +65,11 @@ start=$(date +%s)
 start_fmt=$(date +%Y-%m-%d\ %r)
 echo "STARTING TIMING RUN AT $start_fmt"
 
-
-## Print important parameters
-echo "===  Configuration & Parameters  ==="
-echo "HOSTNAME: $HOSTNAME"
+echo "===  Hyperparameters  ==="
+echo "NODENAME: $SLURMD_NODENAME"
 echo "USERNAME: $USERNAME"
-echo "DATASET_DIR: $DATASET_DIR"
-echo "DGXNNODES: $DGXNNODES"
-echo "DGXSYSTEM: $DGXSYSTEM"
+echo "GXNNODES: $DGXNNODES"
 echo "DGXNGPU: $DGXNGPU"
-echo "TRACEDUMP: $TRACEDUMP"
-echo "USE_DOCKER: $USE_DOCKER"
 echo "LR: $LR"
 echo "WARMUP_EPOCHS: $WARMUP_EPOCHS"
 echo "BATCHSIZE: $BATCHSIZE"
@@ -85,7 +84,8 @@ echo "NCCL_TEST: $NCCL_TEST"
 echo "EPOCH_PROF: $EPOCH_PROF"
 echo "SYNTH_DATA: $SYNTH_DATA"
 echo "DISABLE_CG: $DISABLE_CG"
-echo "===================================="
+echo "TRACEDUMP: $TRACEDUMP"
+echo "========================"
 echo ""
 
 # Run benchmark
@@ -103,22 +103,6 @@ if [ ${SYNTH_DATA} -gt 0 ]; then
 fi
 
 declare -a CMD
-<<comment
-if [ -n "${SLURM_LOCALID-}" ]; then
-    # Mode 1: Slurm launched a task for each GPU and set some envvars; no need for parallel launch
-  if [ "${SLURM_NTASKS}" -gt "${SLURM_JOB_NUM_NODES}" ]; then
-    CMD=( 'bindpcie' '--ib=single' '--' ${NSYSCMD} 'python' '-u' )
-  else
-    CMD=( ${NSYSCMD} 'python' '-u' )
-  fi
-else
-  # Mode 2: Single-node Docker, we've been launched with torch_run
-  # TODO: Replace below CMD with NSYSCMD..., but make sure NSYSCMD is an array, not a string
-  # CMD=( "python" )
-  CMD=( "python3" "-m" "torch.distributed.launch" "--use_env" "--standalone" "--nnodes=1" "--nproc_per_node=${DGXNGPU}" )
-  [ "$MEMBIND" = false ] && CMD+=( "--no_membind" )
-fi
-comment
 
 ## If TRACEDUMP is set to 1 (or any value larger than 0),
 ## then trace will be recorded during execution.
@@ -138,11 +122,7 @@ if [ ${TRACEDUMP} -gt 0 ]; then
   fi
 fi
 
-if [ ${USE_DOCKER} -gt 0 ]; then
-    CMD=( "python3" )
-else
-    CMD=( "python3" "-m" "torch.distributed.launch" "--use_env" "--standalone" "--nnodes=1" "--nproc_per_node=${DGXNGPU}" )
-fi
+CMD=( "python3" "-m" "torch.distributed.launch" "--use_env" "--node_rank=${SLURM_NODEID}" "--nnodes=${SLURM_NTASKS}" "--master_addr=${master_node_ip}" "--master_port=23456" "--nproc_per_node=${DGXNGPU}" )
 #[ "$MEMBIND" = false ] && CMD+=( "--no_membind" )
 
 if [ "$LOGGER" = "apiLog.sh" ]; then

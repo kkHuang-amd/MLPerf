@@ -269,28 +269,31 @@ def main(args):
     assert((args.dali and not args.syn_dataset) or not args.dali)
     # At the moment, to use JIT FrozenBN fusions, one must use the FrozenBN optimization flag
     assert((args.jit and args.frozen_bn_opt) or not args.jit)
-
+    
+    cuda_available = torch.cuda.is_available()
     # Enable JIT
     if args.jit:
         assert args.backbone == 'resnext50_32x4d',"JIT was only tested with ResNeXt50-32x4d."
-        if torch.cuda.is_available() and torch.version.cuda:
-            print("RetinaNet running on CUDA")
-            torch._C._jit_set_nvfuser_enabled(True)
-            torch._C._jit_set_texpr_fuser_enabled(False)
-            torch._C._jit_set_profiling_executor(True)
-            torch._C._jit_set_profiling_mode(True)
-            torch._C._jit_override_can_fuse_on_cpu(False)
-            torch._C._jit_override_can_fuse_on_gpu(False)
-            torch._C._jit_set_bailout_depth(20)
-        elif torch.cuda.is_available() and torch.version.hip:
-            print("RetinaNet running on ROCm")
-            torch._C._jit_set_nvfuser_enabled(False)
-            torch._C._jit_set_texpr_fuser_enabled(True)
-            torch._C._jit_set_profiling_executor(True)
-            torch._C._jit_set_profiling_mode(True)
-            torch._C._jit_override_can_fuse_on_cpu(False)
-            torch._C._jit_override_can_fuse_on_gpu(False)
-            torch._C._jit_set_bailout_depth(20)
+        if cuda_available:
+            if torch.version.cuda:
+                print("RetinaNet running on CUDA")
+                torch._C._jit_set_nvfuser_enabled(True)
+                torch._C._jit_set_texpr_fuser_enabled(False)
+                torch._C._jit_set_profiling_executor(True)
+                torch._C._jit_set_profiling_mode(True)
+                torch._C._jit_override_can_fuse_on_cpu(False)
+                torch._C._jit_override_can_fuse_on_gpu(False)
+                torch._C._jit_set_bailout_depth(20)
+            else:
+                name = "ROCm" if torch.version.hip else "unknown"
+                print(f"RetinaNet running on {name}")
+                torch._C._jit_set_nvfuser_enabled(False)
+                torch._C._jit_set_texpr_fuser_enabled(True)
+                torch._C._jit_set_profiling_executor(True)
+                torch._C._jit_set_profiling_mode(True)
+                torch._C._jit_override_can_fuse_on_cpu(False)
+                torch._C._jit_override_can_fuse_on_gpu(False)
+                torch._C._jit_set_bailout_depth(20)
 
     # Init distributed mode
     train_group, eval_group = utils.init_distributed_mode(args)
@@ -436,7 +439,7 @@ def main(args):
     t_data, t_fwd, t_bwd, t_eval = float(), float(), float(), float()
 
     # Start to record nsys trace
-    if torch.cuda.is_available() and torch.version.cuda:
+    if cuda_available and torch.version.cuda:
         torch.cuda.cudart().cudaProfilerStart()
 
     # The dali based data_loader doesn't touch data at init time (lazy_init=True). So we place before after RUN_START
@@ -472,6 +475,7 @@ def main(args):
     mllogger.end(key=INIT_STOP, sync=True)
 
     start_time = time.time()
+    print("Initializing bridge....")
     sbridge = init_bridge(PyTProfilerHandler(), PyTCommunicationHandler(), mllogger)
     mllogger.start(key=RUN_START, sync=True)
     sbridge.start_prof(SBridge.LOAD_TIME)
@@ -660,7 +664,7 @@ def main(args):
                 status = SUCCESS
 
     # Stop recording nsys trace
-    if torch.cuda.is_available() and torch.version.cuda:
+    if cuda_available and torch.version.cuda:
         torch.cuda.cudart().cudaProfilerStop()
 
     mllogger.end(key=RUN_STOP, metadata={"status": status}, sync=True)

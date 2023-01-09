@@ -173,6 +173,7 @@ class MetricLogger(object):
         self.delimiter = delimiter
         self.summary = defaultdict(lambda: None)
         self.current_iter = 0
+        self.cuda_available = torch.cuda.is_available()
 
     def update(self, **kwargs):
         for k, v in kwargs.items():
@@ -215,7 +216,7 @@ class MetricLogger(object):
         iter_time = SmoothedValue(fmt='{avg:.4f}')
         data_time = SmoothedValue(fmt='{avg:.4f}')
         space_fmt = ':' + str(len(str(len(iterable)))) + 'd'
-        if torch.cuda.is_available():
+        if self.cuda_available:
             log_msg = self.delimiter.join([
                 header,
                 '[{0' + space_fmt + '}/{1}]',
@@ -242,7 +243,7 @@ class MetricLogger(object):
             if self.current_iter % print_freq == 0 or self.current_iter == len(iterable) - 1:
                 eta_seconds = iter_time.global_avg * (len(iterable) - self.current_iter)
                 eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
-                if torch.cuda.is_available():
+                if self.cuda_available:
                     print(log_msg.format(
                         self.current_iter, len(iterable), eta=eta_string,
                         meters=str(self),

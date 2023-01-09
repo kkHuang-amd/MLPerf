@@ -110,7 +110,7 @@ done
 
 # Parallelize over $CPUS cores
 CPUS=64
-seq -w 00000 00499 | xargs --max-args=1 --max-procs=$CPUS -I{} python create_per_seqlength_data.py \
+seq -w 00000 00499 | xargs --max-args=1 --max-procs=$CPUS -I{} python3 create_per_seqlength_data.py \
     --input_file ${DATADIR}/download/results4/part-{}-of-00500 \
     --output_file ${DATADIR}/per_seqlen_parts/part-{} \
     --vocab_file ${DATADIR}/phase1/vocab.txt \
@@ -123,21 +123,21 @@ seq -w 00000 00499 | xargs --max-args=1 --max-procs=$CPUS -I{} python create_per
 
 #Merge all results
 mkdir -p ${DATADIR}/per_seqlen
-seq 0 511 | xargs --max-args=1 --max-procs=$CPUS -I{} python ./gather_per_seqlength_data.py \
-    --input_hdf5 /workspace/bert_data/per_seqlen_parts \
-    --output_hdf5 /workspace/bert_data/per_seqlen \
+seq 0 511 | xargs --max-args=1 --max-procs=$CPUS -I{} python3 ./gather_per_seqlength_data.py \
+    --input_hdf5 ${DATADIR}/per_seqlen_parts \
+    --output_hdf5 ${DATADIR}/per_seqlen \
     --seq_length {}
 
 #Generate sub-optimal packing strategy based on lenghts distribution of training set and store samples-based lists per shard
-python ./generate_packing_strategy.py \
-    --input_hdf5 /workspace/bert_data/per_seqlen \
-    --output_hdf5 /workspace/bert_data/packed_data \
+python3 ./generate_packing_strategy.py \
+    --input_hdf5 ${DATADIR}/per_seqlen \
+    --output_hdf5 ${DATADIR}/packed_data \
     --max_seq_length 512 \
     --max_seq_per_sample 3 \
     --shards_num ${SHARDS} 
 
 # Create training set shards based on generated lists
-python create_packed_trainset.py \
+python3 create_packed_trainset.py \
     --input_hdf5 ${DATADIR}/per_seqlen \
     --assignment_file ${DATADIR}/packed_data \
     --output_hdf5 ${DATADIR}/packed_data

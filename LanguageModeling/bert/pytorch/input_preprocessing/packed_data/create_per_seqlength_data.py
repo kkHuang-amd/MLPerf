@@ -22,7 +22,7 @@ from __future__ import print_function
 
 import collections
 import random
-import tokenization
+from bert import tokenization
 import tensorflow as tf
 import pickle
 from tqdm import tqdm

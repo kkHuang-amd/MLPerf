@@ -24,7 +24,16 @@ set -e
 # Only rank print
 [ "${SLURM_LOCALID-0}" -ne 0 ] && set +x
 
-source config_MI250_002x08x004.sh
+export MIOPEN_USER_DB_PATH=/tmp/miopen-${SLURMD_NODENAME}
+export MIOPEN_CACHE_DIR=/tmp/cache/miopen-${SLURMD_NODENAME}
+#export MIOPEN_FIND_ENFORCE=4
+#export MIOPEN_FIND_MODE=1
+rm -rf ${MIOPEN_USER_DB_PATH}
+rm -rf ${MIOPEN_CACHE_DIR}
+mkdir -p ${MIOPEN_USER_DB_PATH}
+mkdir -p ${MIOPEN_CACHE_DIR}
+echo "MIOPEN_USER_DB_PATH: ${MIOPEN_USER_DB_PATH}"
+echo "MIOPEN_CACHE_DIR: ${MIOPEN_CACHE_DIR}"
 
 # NCCL
 export NCCL_MIN_NCHANNELS=${NCCL_MIN_NCHANNELS:-4} 
@@ -122,7 +131,7 @@ if [ ${TRACEDUMP} -gt 0 ]; then
   fi
 fi
 
-CMD=( "python3" "-m" "torch.distributed.launch" "--use_env" "--node_rank=${SLURM_NODEID}" "--nnodes=${SLURM_NTASKS}" "--master_addr=${master_node_ip}" "--master_port=23456" "--nproc_per_node=${DGXNGPU}" )
+CMD=( "python3" "-m" "torch.distributed.launch" "--use_env" "--node_rank=${SLURM_NODEID}" "--nnodes=${SLURM_NTASKS}" "--master_addr=${master_addr}" "--master_port=23456" "--nproc_per_node=${DGXNGPU}" )
 #[ "$MEMBIND" = false ] && CMD+=( "--no_membind" )
 
 if [ "$LOGGER" = "apiLog.sh" ]; then

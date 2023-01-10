@@ -130,7 +130,7 @@ for _experiment_index in $(seq -w 1 "${NEXP}"); do
     (
 
         echo "Beginning trial ${_experiment_index} of ${NEXP}"
-	echo ":::DLPAL ${CONT} ${SLURM_JOB_ID} ${SLURM_JOB_NUM_NODES} ${SLURM_JOB_NODELIST}"
+        echo ":::DLPAL ${CONT} ${SLURM_JOB_ID} ${SLURM_JOB_NUM_NODES} ${SLURM_JOB_NODELIST}"
 
         # Print system info
         srun -N1 -n1 --container-name="${CONT_NAME}" python -c ""

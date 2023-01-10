@@ -3,25 +3,23 @@
 ## User setting
 export USERNAME="amd"
 export PLATFORM="MI250"
+export BATCHSIZE=8
+export NUMEPOCHS=8
 export LR=0.0001
 export EXTRA_PARAMS='--jit --frozen-bn-opt --frozen-bn-fp16 --apex-adam --apex-focal-loss --fp16-allreduce --disable-ddp-broadcast-buffers --reg-head-pad --cls-head-pad --skip-metric-loss --async-coco'
-#export EXTRA_PARAMS='--amp --apex-focal-loss --apex-adam --frozen-bn-fp16 --fp16-allreduce'
 export TRACEDUMP=0
 
-## Dataset
-export DATASET_DIR=${DATASET_DIR:-"/datasets/open-images-v6"}
-
 ## DL params
-export BATCHSIZE=${BATCHSIZE:-32}
-export NUMEPOCHS=${NUMEPOCHS:-8}
-export LR=${LR:-0.000085}
-export WARMUP_EPOCHS=${WARMUP_EPOCHS:-0}
-export EXTRA_PARAMS=${EXTRA_PARAMS:-'--jit -frozen-bn-opt --frozen-bn-fp16 --apex-adam --apex-focal-loss --fp16-allreduce --reg-head-pad --cls-head-pad --skip-metric-loss --async-coco'}
+export BATCHSIZE=${BATCHSIZE:-4}
+export NUMEPOCHS=${NUMEPOCHS:-6}
+export LR=${LR:-0.0001}
+export WARMUP_EPOCHS=${WARMUP_EPOCHS:-1}
+export EXTRA_PARAMS=${EXTRA_PARAMS:-'--jit --frozen-bn-opt --frozen-bn-fp16 --apex-adam --apex-focal-loss --apex-head-fusion --disable-ddp-broadcast-buffers --fp16-allreduce --reg-head-pad --cls-head-pad --cuda-graphs --dali --dali-matched-idxs --dali-eval --skip-metric-loss --cuda-graphs-syn --sync-after-graph-replay --async-coco'}
 
 ## System run parms
-export DGXNNODES=1
+export DGXNNODES=4
 export DGXSYSTEM=$(basename $(readlink -f ${BASH_SOURCE[0]}) | sed 's/^config_//' | sed 's/\.sh$//' )
-WALLTIME_MINUTES=160
+WALLTIME_MINUTES=20
 export WALLTIME=$((${NEXP:-1} * ${WALLTIME_MINUTES}))
 
 ## System config params

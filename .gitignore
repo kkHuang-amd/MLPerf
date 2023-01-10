@@ -2,6 +2,7 @@
 data/
 results/
 tensorboard/
+torch-home/
 __pycache__/
 *.log
 *.err

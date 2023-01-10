@@ -641,7 +641,7 @@ def main(args):
                                     graphed_model=graphed_model_eval, static_input=static_input_eval,
                                     static_output=static_model_output_eval,
                                     sbridge=sbridge)
-            t_eval += t_eval_start - time.time()
+            t_eval += time.time() - t_eval_start
             if args.rank in args.eval_ranks and args.target_map and accuracy and accuracy >= args.target_map:
                 status = SUCCESS
                 break

@@ -67,7 +67,7 @@ echo "===  Configuration & Parameters  ==="
 if [ ${DGXNNODES} -gt 1 ]; then
   echo "NODENAME: $SLURMD_NODENAME"
 else
-    echo "HOSTNAME: $HOSTNAME"
+  echo "HOSTNAME: $HOSTNAME"
 fi
 echo "USERNAME: $USERNAME"
 echo "DATASET_DIR: $DATASET_DIR"

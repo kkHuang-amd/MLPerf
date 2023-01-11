@@ -33,6 +33,7 @@ WARMUP_EPOCHS=${WARMUP_EPOCHS:-1}
 BATCHSIZE=${BATCHSIZE:-2}
 EVALBATCHSIZE=${EVALBATCHSIZE:-${BATCHSIZE}}
 NUMEPOCHS=${NUMEPOCHS:-10}
+NUMWORKERS=${NUMWORKERS:-4}
 LOG_INTERVAL=${LOG_INTERVAL:-20}
 DATASET_DIR=${DATASET_DIR:-"/datasets/open-images-v6"}
 LOG_DIR=${LOG_DIR:-"/results"}
@@ -63,7 +64,11 @@ echo "STARTING TIMING RUN AT $start_fmt"
 
 ## Print important parameters
 echo "===  Configuration & Parameters  ==="
-echo "HOSTNAME: $HOSTNAME"
+if [ ${DGXNNODES} -gt 1 ]; then
+  echo "NODENAME: $SLURMD_NODENAME"
+else
+    echo "HOSTNAME: $HOSTNAME"
+fi
 echo "USERNAME: $USERNAME"
 echo "DATASET_DIR: $DATASET_DIR"
 echo "DGXNNODES: $DGXNNODES"
@@ -76,6 +81,7 @@ echo "WARMUP_EPOCHS: $WARMUP_EPOCHS"
 echo "BATCHSIZE: $BATCHSIZE"
 echo "EVALBATCHSIZE: $EVALBATCHSIZE"
 echo "NUMEPOCHS: $NUMEPOCHS"
+echo "NUMWORKERS: $NUMWORKERS"
 echo "LOG_INTERVAL: $LOG_INTERVAL"
 echo "DATASET_DIR: $DATASET_DIR"
 echo "TORCH_HOME: $TORCH_HOME"
@@ -87,6 +93,22 @@ echo "SYNTH_DATA: $SYNTH_DATA"
 echo "DISABLE_CG: $DISABLE_CG"
 echo "===================================="
 echo ""
+
+if [ ${DGXNNODES} -gt 1 ]; then
+  # Workaround for multi-node MIOpen issue
+  export MIOPEN_USER_DB_PATH=$PWD/.local/miopen-${SLURMD_NODENAME}
+  export MIOPEN_CACHE_DIR=$PWD/.local/cache/miopen-${SLURMD_NODENAME}
+  rm -rf ${MIOPEN_USER_DB_PATH}
+  rm -rf ${MIOPEN_CACHE_DIR}
+  mkdir -p ${MIOPEN_USER_DB_PATH}
+  mkdir -p ${MIOPEN_CACHE_DIR}
+  echo "MIOPEN_USER_DB_PATH: ${MIOPEN_USER_DB_PATH}"
+  echo "MIOPEN_CACHE_DIR: ${MIOPEN_CACHE_DIR}"
+
+  # NCCL
+  #export NCCL_MIN_NCHANNELS=${NCCL_MIN_NCHANNELS:-4}
+  #export NCCL_MAX_NCHANNELS=${NCCL_MAX_NCHANNELS:-8}
+fi
 
 # Run benchmark
 echo "===  Running Benchmark  ==="
@@ -103,22 +125,20 @@ if [ ${SYNTH_DATA} -gt 0 ]; then
 fi
 
 declare -a CMD
-<<comment
-if [ -n "${SLURM_LOCALID-}" ]; then
-    # Mode 1: Slurm launched a task for each GPU and set some envvars; no need for parallel launch
-  if [ "${SLURM_NTASKS}" -gt "${SLURM_JOB_NUM_NODES}" ]; then
-    CMD=( 'bindpcie' '--ib=single' '--' ${NSYSCMD} 'python' '-u' )
-  else
-    CMD=( ${NSYSCMD} 'python' '-u' )
-  fi
-else
-  # Mode 2: Single-node Docker, we've been launched with torch_run
-  # TODO: Replace below CMD with NSYSCMD..., but make sure NSYSCMD is an array, not a string
-  # CMD=( "python" )
-  CMD=( "python3" "-m" "torch.distributed.launch" "--use_env" "--standalone" "--nnodes=1" "--nproc_per_node=${DGXNGPU}" )
-  [ "$MEMBIND" = false ] && CMD+=( "--no_membind" )
-fi
-comment
+#if [ -n "${SLURM_LOCALID-}" ]; then
+#    # Mode 1: Slurm launched a task for each GPU and set some envvars; no need for parallel launch
+#  if [ "${SLURM_NTASKS}" -gt "${SLURM_JOB_NUM_NODES}" ]; then
+#    CMD=( 'bindpcie' '--ib=single' '--' ${NSYSCMD} 'python' '-u' )
+#  else
+#    CMD=( ${NSYSCMD} 'python' '-u' )
+#  fi
+#else
+#  # Mode 2: Single-node Docker, we've been launched with torch_run
+#  # TODO: Replace below CMD with NSYSCMD..., but make sure NSYSCMD is an array, not a string
+#  # CMD=( "python" )
+#  CMD=( "python3" "-m" "torch.distributed.launch" "--use_env" "--standalone" "--nnodes=1" "--nproc_per_node=${DGXNGPU}" )
+#  [ "$MEMBIND" = false ] && CMD+=( "--no_membind" )
+#fi
 
 ## If TRACEDUMP is set to 1 (or any value larger than 0),
 ## then trace will be recorded during execution.
@@ -139,9 +159,14 @@ if [ ${TRACEDUMP} -gt 0 ]; then
 fi
 
 if [ ${USE_DOCKER} -gt 0 ]; then
-    CMD=( "python3" )
+  CMD=( "python3" )
 else
-    CMD=( "python3" "-m" "torch.distributed.launch" "--use_env" "--standalone" "--nnodes=1" "--nproc_per_node=${DGXNGPU}" )
+  CMD=( "python3" "-m" "torch.distributed.launch" "--use_env" "--nnodes=${DGXNNODES}" "--nproc_per_node=${DGXNGPU}" )
+  if [ ${DGXNNODES} -gt 1 ]; then
+    CMD+=( "--rdzv_id=${SLURM_JOB_ID}" "--rdzv_backend=c10d" "--rdzv_endpoint=${MASTER_ADDR}:${MASTER_PORT}" )
+  else
+    CMD+=( "--standalone" )
+  fi
 fi
 #[ "$MEMBIND" = false ] && CMD+=( "--no_membind" )
 
@@ -167,6 +192,7 @@ PARAMS=(
       --batch-size              "${BATCHSIZE}"
       --eval-batch-size         "${EVALBATCHSIZE}"
       --epochs                  "${NUMEPOCHS}"
+      --workers                 "${NUMWORKERS}"
       --print-freq              "${LOG_INTERVAL}"
       --dataset-path            "${DATASET_DIR}"
       --warmup-epochs           "${WARMUP_EPOCHS}"

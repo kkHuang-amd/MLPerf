@@ -3,6 +3,7 @@
 ## User setting
 export USERNAME="amd"
 export PLATFORM="MI250"
+export BATCHSIZE=32
 export LR=0.0001
 export EXTRA_PARAMS='--jit --frozen-bn-opt --frozen-bn-fp16 --apex-adam --apex-focal-loss --fp16-allreduce --disable-ddp-broadcast-buffers --reg-head-pad --cls-head-pad --skip-metric-loss --async-coco'
 #export EXTRA_PARAMS='--amp --apex-focal-loss --apex-adam --frozen-bn-fp16 --fp16-allreduce'

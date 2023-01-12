@@ -48,19 +48,11 @@ TRACEDUMP=${TRACEDUMP:-0}
 USE_DOCKER=${USE_DOCKER:-0}
 
 TIMESTAMP=$(date +'%Y%m%d%H%M%S')
-GPU_SUFFIX="gpu"
-if [ ${DGXNGPU} -gt 1 ]; then
-  GPU_SUFFIX="${GPU_SUFFIX}s"
-fi
-RUN_NAME="${USERNAME}_${PLATFORM}_${DGXNGPU}${GPU_SUFFIX}_${HOSTNAME}_${TIMESTAMP}"
-RUN_DIR="${LOG_DIR}/${RUN_NAME}"
-[ -d ${RUN_DIR} ] || mkdir -p ${RUN_DIR}
 
 # Start timing
 start=$(date +%s)
 start_fmt=$(date +%Y-%m-%d\ %r)
 echo "STARTING TIMING RUN AT $start_fmt"
-
 
 ## Print important parameters
 echo "===  Configuration & Parameters  ==="
@@ -94,21 +86,19 @@ echo "DISABLE_CG: $DISABLE_CG"
 echo "===================================="
 echo ""
 
-if [ ${DGXNNODES} -gt 1 ]; then
-  # Workaround for multi-node MIOpen issue
-  export MIOPEN_USER_DB_PATH=$PWD/.local/miopen-${SLURMD_NODENAME}
-  export MIOPEN_CACHE_DIR=$PWD/.local/cache/miopen-${SLURMD_NODENAME}
-  rm -rf ${MIOPEN_USER_DB_PATH}
-  rm -rf ${MIOPEN_CACHE_DIR}
-  mkdir -p ${MIOPEN_USER_DB_PATH}
-  mkdir -p ${MIOPEN_CACHE_DIR}
-  echo "MIOPEN_USER_DB_PATH: ${MIOPEN_USER_DB_PATH}"
-  echo "MIOPEN_CACHE_DIR: ${MIOPEN_CACHE_DIR}"
+# Workaround for multi-node MIOpen issue
+export MIOPEN_USER_DB_PATH=$PWD/.local/miopen-${SLURMD_NODENAME}
+export MIOPEN_CACHE_DIR=$PWD/.local/cache/miopen-${SLURMD_NODENAME}
+rm -rf ${MIOPEN_USER_DB_PATH}
+rm -rf ${MIOPEN_CACHE_DIR}
+mkdir -p ${MIOPEN_USER_DB_PATH}
+mkdir -p ${MIOPEN_CACHE_DIR}
+echo "MIOPEN_USER_DB_PATH: ${MIOPEN_USER_DB_PATH}"
+echo "MIOPEN_CACHE_DIR: ${MIOPEN_CACHE_DIR}"
 
-  # NCCL
-  #export NCCL_MIN_NCHANNELS=${NCCL_MIN_NCHANNELS:-4}
-  #export NCCL_MAX_NCHANNELS=${NCCL_MAX_NCHANNELS:-8}
-fi
+# NCCL
+#export NCCL_MIN_NCHANNELS=${NCCL_MIN_NCHANNELS:-4}
+#export NCCL_MAX_NCHANNELS=${NCCL_MAX_NCHANNELS:-8}
 
 # Run benchmark
 echo "===  Running Benchmark  ==="
@@ -144,6 +134,13 @@ declare -a CMD
 ## then trace will be recorded during execution.
 if [ ${TRACEDUMP} -gt 0 ]; then
   EXTRA_PARAMS=$(echo $EXTRA_PARAMS | sed 's/--async-coco//')
+  GPU_SUFFIX="gpu"
+  if [ ${DGXNGPU} -gt 1 ]; then
+    GPU_SUFFIX="${GPU_SUFFIX}s"
+  fi
+  RUN_NAME="${USERNAME}_${PLATFORM}_${DGXNGPU}${GPU_SUFFIX}_${HOSTNAME}_${TIMESTAMP}"
+  RUN_DIR="${LOG_DIR}/${RUN_NAME}"
+  [ -d ${RUN_DIR} ] || mkdir -p ${RUN_DIR}
   if [ -x "$(command -v nvidia-smi)" ]; then
     # nsys
     echo "Use nsys as tracer..."

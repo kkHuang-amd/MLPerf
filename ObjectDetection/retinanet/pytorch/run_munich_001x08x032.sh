@@ -3,11 +3,11 @@
 #SBATCH --job-name=retinanet
 #SBATCH --output=retinanet-%j_001x08x032.out
 ##SBATCH --partition=4CN512C32G4H_4IB_MI250_Ubuntu20
-##SBATCH --partition=5CN512C40G5H_1IB_MI250_Ubuntu20
-#SBATCH --partition=1CN96C8G1H_MI250_Ubuntu20
+#SBATCH --partition=5CN512C40G5H_1IB_MI250_Ubuntu20
+##SBATCH --partition=1CN96C8G1H_MI250_Ubuntu20
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-##SBATCH --cpus-per-task=96
+#SBATCH --cpus-per-task=128
 #SBATCH --gpus-per-node=8
 #SBATCH --time=08:00:00
 #SBATCH --exclusive

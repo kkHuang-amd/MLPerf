@@ -54,43 +54,16 @@ start=$(date +%s)
 start_fmt=$(date +%Y-%m-%d\ %r)
 echo "STARTING TIMING RUN AT $start_fmt"
 
-## Print important parameters
-echo "===  Configuration & Parameters  ==="
-if [ ${DGXNNODES} -gt 1 ]; then
-  echo "NODENAME: $SLURMD_NODENAME"
-else
-  echo "HOSTNAME: $HOSTNAME"
-fi
-echo "USERNAME: $USERNAME"
-echo "DATASET_DIR: $DATASET_DIR"
-echo "DGXNNODES: $DGXNNODES"
-echo "DGXSYSTEM: $DGXSYSTEM"
-echo "DGXNGPU: $DGXNGPU"
-echo "TRACEDUMP: $TRACEDUMP"
-echo "USE_DOCKER: $USE_DOCKER"
-echo "LR: $LR"
-echo "WARMUP_EPOCHS: $WARMUP_EPOCHS"
-echo "BATCHSIZE: $BATCHSIZE"
-echo "EVALBATCHSIZE: $EVALBATCHSIZE"
-echo "NUMEPOCHS: $NUMEPOCHS"
-echo "NUMWORKERS: $NUMWORKERS"
-echo "LOG_INTERVAL: $LOG_INTERVAL"
-echo "DATASET_DIR: $DATASET_DIR"
-echo "TORCH_HOME: $TORCH_HOME"
-echo "TIME_TAGS: $TIME_TAGS"
-echo "NVTX_FLAG: $NVTX_FLAG"
-echo "NCCL_TEST: $NCCL_TEST"
-echo "EPOCH_PROF: $EPOCH_PROF"
-echo "SYNTH_DATA: $SYNTH_DATA"
-echo "DISABLE_CG: $DISABLE_CG"
-echo "===================================="
-echo ""
-
 # Workaround for multi-node MIOpen issue
-export MIOPEN_USER_DB_PATH=$PWD/.local/miopen-${SLURMD_NODENAME}
-export MIOPEN_CACHE_DIR=$PWD/.local/cache/miopen-${SLURMD_NODENAME}
-rm -rf ${MIOPEN_USER_DB_PATH}
-rm -rf ${MIOPEN_CACHE_DIR}
+if [ ${DGXNNODES} -gt 1 ]; then
+  DIR_NAME=${SLURMD_NODENAME}
+else
+  DIR_NAME=${HOSTNAME}
+fi
+export MIOPEN_USER_DB_PATH=$PWD/.local/miopen-${DIR_NAME}
+export MIOPEN_CACHE_DIR=$PWD/.local/cache/miopen-${DIR_NAME}
+[ -d ${MIOPEN_USER_DB_PATH} ] && rm -rf ${MIOPEN_USER_DB_PATH}
+[ -d ${MIOPEN_CACHE_DIR} ] && rm -rf ${MIOPEN_CACHE_DIR}
 mkdir -p ${MIOPEN_USER_DB_PATH}
 mkdir -p ${MIOPEN_CACHE_DIR}
 echo "MIOPEN_USER_DB_PATH: ${MIOPEN_USER_DB_PATH}"

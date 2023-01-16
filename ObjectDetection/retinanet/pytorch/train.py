@@ -322,7 +322,13 @@ def main(args):
     mllogger.event(key=GLOBAL_BATCH_SIZE, value=args.batch_size*args.num_train_ranks)
     mllogger.event(key=EPOCH_COUNT, value=args.epochs)
     mllogger.event(key=FIRST_EPOCH_NUM, value=args.start_epoch)
-    print(args)
+    #print(args)
+    print("==========  Input arguments  ==========")
+    for member in dir(args):
+        if not member.startswith("_"):
+            value = getattr(args, member)
+            print(f"{member}={value}")
+    print("=======================================\n")
 
     # Data loading code
     print("Getting dataset information")

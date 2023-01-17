@@ -118,16 +118,17 @@ class FwdLossBwdTrainer():
                                     warmup_iters=0,
                                     warmup_only=(not use_cuda_graph))
 
+        requested_dtype = torch.float16 if self.args.fp16 else torch.float32
         bert_head_segment = bert_model.heads_only_segment
         sample_head_train = [
-                torch.ones(self.args.train_batch_size, self.args.max_seq_length, 1024, dtype=torch.float16, device=self.args.device),
-                torch.ones(self.args.train_batch_size,                           1024, dtype=torch.float16, device=self.args.device),
+                torch.ones(self.args.train_batch_size, self.args.max_seq_length, 1024, dtype=requested_dtype, device=self.args.device),
+                torch.ones(self.args.train_batch_size,                           1024, dtype=requested_dtype, device=self.args.device),
                 torch.ones(self.args.train_batch_size, self.args.max_seq_length,       dtype=torch.int64, device=self.args.device),
                 torch.ones(self.args.train_batch_size,                                 dtype=torch.int64, device=self.args.device),
                 ]
         sample_head_eval = [
-                torch.ones(eval_batch, self.args.max_seq_length, 1024, dtype=torch.float16, device=self.args.device),
-                torch.ones(eval_batch,                           1024, dtype=torch.float16, device=self.args.device),
+                torch.ones(eval_batch, self.args.max_seq_length, 1024, dtype=requested_dtype, device=self.args.device),
+                torch.ones(eval_batch,                           1024, dtype=requested_dtype, device=self.args.device),
                 torch.ones(eval_batch, self.args.max_seq_length,       dtype=torch.int64, device=self.args.device),
                 torch.ones(eval_batch,                                 dtype=torch.int64, device=self.args.device),
                 ]

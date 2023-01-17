@@ -33,7 +33,7 @@ job_name=${13:-"bert_lamb_pretraining"}
 train_batch_size_phase2=${17:-8}
 learning_rate_phase2=${18:-"3.5e-4"}
 warmup_proportion_phase2=${19:-"0"}
-train_steps_phase2=${20:-13304}
+train_steps_phase2=${20:-15000}
 allreduce_post_accumulation=${14:-"false"}
 allreduce_post_accumulation_fp16=${15:-"false"}
 gradient_accumulation_steps_phase2=${21:-1}
@@ -109,12 +109,12 @@ CMD+=" --opt_lamb_beta_2=${OPT_LAMB_BETA_2:-0.999}"
 CMD+=" --weight_decay_rate=${WEIGHT_DECAY_RATE:-0.01}"
 CMD+=" --do_train --phase2"
 CMD+=" --train_mlm_accuracy_window_size=0"
-CMD+=" --target_mlm_accuracy=0.712"
-CMD+=" --fused_gelu_bias --dense_seq_output"
+CMD+=" --target_mlm_accuracy=0.72"
+CMD+=" --fused_gelu_bias --dense_seq_output --bypass_amp --exchange_padding"
 CMD+=" --eval_dir=/workspace/bert-dataset-v1.1/eval_varlength"
-CMD+=" --eval_iter_start_samples=751424"
-CMD+=" --eval_iter_samples=50000"
-CMD+=" --eval_batch_size=8"
+CMD+=" --eval_iter_start_samples=150000"
+CMD+=" --eval_iter_samples=150000"
+CMD+=" --eval_batch_size=16"
 CMD+=" --cache_eval_data"
 
 
